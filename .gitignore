@@ -1,0 +1,14 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+api-coordinador/api-coordinador
+nodo-ml/nodo-ml
+
+.env
+.idea/
+.vscode/
+
+*.csv
+!datos_raw/diabetes_012_health_indicators_BRFSS2015.csv
