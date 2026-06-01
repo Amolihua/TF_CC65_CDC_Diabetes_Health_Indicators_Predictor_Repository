@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # Base de Datos Persistente (NoSQL)
+  mongodb:
+    image: mongo:latest
+    container_name: cdc_mongodb
+    ports:
+      - "${MONGO_PORT}:27017"
+    networks:
+      - cdc_network
+    volumes:
+      - mongo_data:/data/db
+
+  # Base de Datos en Memoria (Caché)
+  redis:
+    image: redis:alpine
+    container_name: cdc_redis
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - cdc_network
+
+  # Nodo Maestro: Coordina el flujo, limpia datos y expone HTTP/WebSockets
+  api-coordinador:
+    build:
+      context: ./api-coordinador
+      dockerfile: Dockerfile
+    container_name: cdc_api_coordinador
+    ports:
+      - "${API_PORT}:8080"
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - cdc_network
+    volumes:
+      - ./datos_raw:/app/datos_raw
+
+  # Nodo de Cómputo Distribuido 1 (Worker de Machine Learning)
+  nodo-ml-1:
+    build:
+      context: ./nodo-ml
+      dockerfile: Dockerfile
+    container_name: cdc_nodo_ml_1
+    ports:
+      - "9001:${TCP_PORT}"
+    env_file:
+      - .env
+    depends_on:
+      - api-coordinador
+    networks:
+      - cdc_network
+
+  # Nodo de Cómputo Distribuido 2 (Worker de Machine Learning)
+  nodo-ml-2:
+    build:
+      context: ./nodo-ml
+      dockerfile: Dockerfile
+    container_name: cdc_nodo_ml_2
+    ports:
+      - "9002:${TCP_PORT}"
+    env_file:
+      - .env
+    depends_on:
+      - api-coordinador
+    networks:
+      - cdc_network
+
+  # Capa de Presentación (Interfaz Web SPA)
+  frontend-spa:
+    build:
+      context: ./frontend-spa
+      dockerfile: Dockerfile
+    container_name: cdc_frontend_spa
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-coordinador
+    networks:
+      - cdc_network
+
+networks:
+  cdc_network:
+    driver: bridge
+
+volumes:
+  mongo_data:
