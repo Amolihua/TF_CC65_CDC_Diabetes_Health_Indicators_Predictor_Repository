@@ -4,7 +4,7 @@ type PerfilPaciente struct {
 	Diabetes012          uint8   `json:"diabetes_012"`
 	HighBP               uint8   `json:"high_bp"`
 	HighChol             uint8   `json:"high_chol"`
-	HexCholCheck         uint8   `json:"chol_check"`
+	CholCheck            uint8   `json:"chol_check"`
 	BMI                  uint8   `json:"bmi"`
 	Smoker               uint8   `json:"smoker"`
 	Stroke               uint8   `json:"stroke"`
