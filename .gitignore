@@ -12,3 +12,5 @@ nodo-ml/nodo-ml
 
 *.csv
 !datos_raw/diabetes_012_health_indicators_BRFSS2015.csv
+
+artifacts/*

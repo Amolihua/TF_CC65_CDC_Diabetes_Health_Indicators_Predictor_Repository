@@ -23,7 +23,7 @@ func workerMultiplicador(jobs <-chan []string, results chan<- [][]string, wg *sy
 
 func main() {
 	tiempoInicio := time.Now()
-	fmt.Println("Iniciando multiplcicación del dataset")
+	fmt.Println("Iniciando multiplicación del dataset")
 
 	in, _ := os.Open("../datos_raw/diabetes_012_health_indicators_BRFSS2015.csv")
 	defer in.Close()
@@ -53,8 +53,8 @@ func main() {
 		escritor.Flush()
 	}()
 
-	factorMultiplicacion := 5
-	numWorkers := 8
+	factorMultiplicacion := 10
+	numWorkers := 12
 
 	for w := 1; w <= numWorkers; w++ {
 		wgWorkers.Add(1)
