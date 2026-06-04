@@ -14,7 +14,6 @@ func IniciarWorkerPool(numWorkers int, jobs <-chan []string) <-chan models.Perfi
 		wg.Add(1)
 		go workerParser(&wg, jobs, results)
 	}
-
 	go func() {
 		wg.Wait()
 		close(results)
@@ -28,39 +27,49 @@ func workerParser(wg *sync.WaitGroup, jobs <-chan []string, results chan<- model
 
 	for record := range jobs {
 		perfil := models.PerfilPaciente{
-			Diabetes012:          parseUint8(record[0]),
-			HighBP:               parseUint8(record[1]),
-			HighChol:             parseUint8(record[2]),
-			CholCheck:            parseUint8(record[3]),
-			BMI:                  parseUint8(record[4]),
-			Smoker:               parseUint8(record[5]),
-			Stroke:               parseUint8(record[6]),
-			HeartDiseaseorAttack: parseUint8(record[7]),
-			PhysActivity:         parseUint8(record[8]),
-			Fruits:               parseUint8(record[9]),
-			Veggies:              parseUint8(record[10]),
-			HvyAlcoholConsump:    parseUint8(record[11]),
-			AnyHealthcare:        parseUint8(record[12]),
-			NoDocbcCost:          parseUint8(record[13]),
-			GenHlth:              parseUint8(record[14]),
-			MentHlth:             parseFloat64(record[15]),
-			PhysHlth:             parseFloat64(record[16]),
-			DiffWalk:             parseUint8(record[17]),
+			Diabetes012:          parseWithDefaultUint8(record[0], 0),
+			HighBP:               parseWithDefaultUint8(record[1], 0),
+			HighChol:             parseWithDefaultUint8(record[2], 0),
+			CholCheck:            parseWithDefaultUint8(record[3], 1),
+			BMI:                  parseWithDefaultUint8(record[4], 27),
+			Smoker:               parseWithDefaultUint8(record[5], 0),
+			Stroke:               parseWithDefaultUint8(record[6], 0),
+			HeartDiseaseorAttack: parseWithDefaultUint8(record[7], 0),
+			PhysActivity:         parseWithDefaultUint8(record[8], 1),
+			Fruits:               parseWithDefaultUint8(record[9], 1),
+			Veggies:              parseWithDefaultUint8(record[10], 1),
+			HvyAlcoholConsump:    parseWithDefaultUint8(record[11], 0),
+			AnyHealthcare:        parseWithDefaultUint8(record[12], 1),
+			NoDocbcCost:          parseWithDefaultUint8(record[13], 0),
+			GenHlth:              parseWithDefaultUint8(record[14], 2),
+			MentHlth:             parseWithDefaultFloat64(record[15], 0.0),
+			PhysHlth:             parseWithDefaultFloat64(record[16], 0.0),
+			DiffWalk:             parseWithDefaultUint8(record[17], 0),
 			Sex:                  parseUint8(record[18]),
-			Age:                  parseUint8(record[19]),
-			Education:            parseUint8(record[20]),
-			Income:               parseUint8(record[21]),
+			Age:                  parseWithDefaultUint8(record[19], 9),
+			Education:            parseWithDefaultUint8(record[20], 5),
+			Income:               parseWithDefaultUint8(record[21], 6),
 		}
 		results <- perfil
 	}
+}
+func parseWithDefaultUint8(s string, defaultVal uint8) uint8 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return uint8(v)
+}
+
+func parseWithDefaultFloat64(s string, defaultVal float64) float64 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return v
 }
 
 func parseUint8(s string) uint8 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return uint8(v)
-}
-
-func parseFloat64(s string) float64 {
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
 }
