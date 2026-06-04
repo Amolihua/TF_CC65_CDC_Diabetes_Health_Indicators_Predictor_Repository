@@ -24,3 +24,22 @@ type PerfilPaciente struct {
 	Education            uint8   `json:"education"`
 	Income               uint8   `json:"income"`
 }
+
+// Numerico -> conteo, media, varianza, desviación estándar y mediana
+type MetricasNumericas struct {
+	Conteo   int     `json:"conteo"`
+	Media    float64 `json:"media"`
+	Varianza float64 `json:"varianza"`
+	DesvStd  float64 `json:"desv_std"`
+	Mediana  float64 `json:"mediana"`
+}
+
+// Reporte estadistico de las métricas descriptivas
+type ReporteEstadistico struct {
+	FreqDiabetes012 map[uint8]int     `json:"freq_diabetes_012"`
+	FreqHighBP      map[uint8]int     `json:"freq_high_bp"`
+	FreqHighChol    map[uint8]int     `json:"freq_high_chol"`
+	FreqSex         map[uint8]int     `json:"freq_sex"`
+	MentHlth        MetricasNumericas `json:"ment_hlth"`
+	PhysHlth        MetricasNumericas `json:"phys_hlth"`
+}
