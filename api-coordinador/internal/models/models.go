@@ -25,7 +25,7 @@ type PerfilPaciente struct {
 	Income               uint8   `json:"income"`
 }
 
-// Numerico -> conteo, media, varianza, desviación estándar y mediana
+// MetricasNumericas -> conteo, media, varianza, desviación estándar y mediana
 type MetricasNumericas struct {
 	Conteo   int     `json:"conteo"`
 	Media    float64 `json:"media"`
@@ -34,12 +34,28 @@ type MetricasNumericas struct {
 	Mediana  float64 `json:"mediana"`
 }
 
-// Reporte estadistico de las métricas descriptivas
+// ReporteEstadistico contiene los mapas unificados de las 22 variables descriptivas
 type ReporteEstadistico struct {
-	FreqDiabetes012 map[uint8]int     `json:"freq_diabetes_012"`
-	FreqHighBP      map[uint8]int     `json:"freq_high_bp"`
-	FreqHighChol    map[uint8]int     `json:"freq_high_chol"`
-	FreqSex         map[uint8]int     `json:"freq_sex"`
-	MentHlth        MetricasNumericas `json:"ment_hlth"`
-	PhysHlth        MetricasNumericas `json:"phys_hlth"`
+	FreqDiabetes012   map[uint8]int     `json:"freq_diabetes_012"`
+	FreqHighBP        map[uint8]int     `json:"freq_high_bp"`
+	FreqHighChol      map[uint8]int     `json:"freq_high_chol"`
+	FreqCholCheck     map[uint8]int     `json:"freq_chol_check"`
+	FreqSmoker        map[uint8]int     `json:"freq_smoker"`
+	FreqStroke        map[uint8]int     `json:"freq_stroke"`
+	FreqHeartDisease  map[uint8]int     `json:"freq_heart_disease"`
+	FreqPhysActivity  map[uint8]int     `json:"freq_phys_activity"`
+	FreqFruits        map[uint8]int     `json:"freq_fruits"`
+	FreqVeggies       map[uint8]int     `json:"freq_veggies"`
+	FreqHvyAlcohol    map[uint8]int     `json:"freq_hvy_alcohol"`
+	FreqAnyHealthcare map[uint8]int     `json:"freq_any_healthcare"`
+	FreqNoDocbcCost   map[uint8]int     `json:"freq_no_doc_bc_cost"`
+	FreqGenHlth       map[uint8]int     `json:"freq_gen_hlth"`
+	FreqDiffWalk      map[uint8]int     `json:"freq_diff_walk"`
+	FreqSex           map[uint8]int     `json:"freq_sex"`
+	FreqAge           map[uint8]int     `json:"freq_age"`
+	FreqEducation     map[uint8]int     `json:"freq_education"`
+	FreqIncome        map[uint8]int     `json:"freq_income"`
+	BMIDistribuido    MetricasNumericas `json:"bmi_distribuido"`
+	MentHlth          MetricasNumericas `json:"ment_hlth"`
+	PhysHlth          MetricasNumericas `json:"phys_hlth"`
 }
