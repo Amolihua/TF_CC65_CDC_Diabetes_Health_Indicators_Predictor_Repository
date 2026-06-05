@@ -97,7 +97,8 @@ func construirModelo(global LocalStats) NaiveBayesModel {
 
 		// Distribución Multinomial + Suavizado Laplace
 		for f := 0; f < 21; f++ {
-			denominador := nClase + 20.0
+			// Corrección: El denominador debe usar la cardinalidad real del arreglo iterado (100) para asegurar masa probabilística total = 1.0
+			denominador := nClase + 100.0
 			for v := 0; v < 100; v++ {
 				modelo.ProbCategoricas[c][f][v] = (float64(global.FreqCategoricas[c][f][v]) + 1.0) / denominador
 			}
