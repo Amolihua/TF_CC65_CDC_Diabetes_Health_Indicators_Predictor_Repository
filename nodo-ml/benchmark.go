@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -22,33 +24,48 @@ type MetadataEntrenamiento struct {
 	TotalRegistros int    `json:"total_registros,omitempty"`
 }
 
+type ResultadoCarga struct {
+	Meta                 MetadataEntrenamiento
+	Dataset              []models.PerfilPaciente
+	TiempoRecepcionParse time.Duration
+}
+
 func main() {
-	listener, _ := net.Listen("tcp", ":9000")
-	fmt.Println("Nodo ML TCP Server escuchando en puerto: |-| 9000 |-| ")
+	puerto := os.Getenv("TCP_PORT")
+	if puerto == "" {
+		puerto = "9000"
+	}
+
+	listener, _ := net.Listen("tcp", ":"+puerto)
+	fmt.Printf("Nodo ML Benchmark escuchando en puerto: |-| %s |-| \n", puerto)
 
 	for {
 		conn, _ := listener.Accept()
-		go manejarConexion(conn)
+		go manejarConexionBenchmark(conn)
 	}
 }
 
-func manejarConexion(conn net.Conn) {
+func manejarConexionBenchmark(conn net.Conn) {
 	defer conn.Close()
 
-	inicio := time.Now()
-	meta, dataset := recibirDataset(conn)
-	numWorkers := resolverWorkers(meta.NumWorkers)
-
-	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d\n", meta.Algoritmo, len(dataset), numWorkers)
+	inicioTotal := time.Now()
+	resultadoCarga := recibirDatasetBenchmark(conn)
+	numWorkers := resolverWorkers(resultadoCarga.Meta.NumWorkers)
 
 	inicioEntrenamiento := time.Now()
-	entrenar(meta.Algoritmo, dataset, numWorkers)
+	entrenar(resultadoCarga.Meta.Algoritmo, resultadoCarga.Dataset, numWorkers)
 	tiempoEntrenamiento := time.Since(inicioEntrenamiento)
+	tiempoTotal := time.Since(inicioTotal)
 
-	fmt.Fprintf(conn, "OK registros=%d workers=%d carga_total=%s entrenamiento=%s\n", len(dataset), numWorkers, time.Since(inicio), tiempoEntrenamiento)
+	fmt.Printf("NODO_METRICA -> Algoritmo: %s | Workers_Nodo: %d | Registros: %d | Recepcion_Parse: %s | Entrenamiento: %s | Total_Nodo: %s | Goroutines: %d | CPUs: %d\n",
+		resultadoCarga.Meta.Algoritmo, numWorkers, len(resultadoCarga.Dataset), resultadoCarga.TiempoRecepcionParse, tiempoEntrenamiento, tiempoTotal, runtime.NumGoroutine(), runtime.NumCPU())
+
+	fmt.Fprintf(conn, "OK registros=%d workers=%d recepcion_parse=%s entrenamiento=%s total_nodo=%s\n",
+		len(resultadoCarga.Dataset), numWorkers, resultadoCarga.TiempoRecepcionParse, tiempoEntrenamiento, tiempoTotal)
 }
 
-func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPaciente) {
+func recibirDatasetBenchmark(conn net.Conn) ResultadoCarga {
+	inicio := time.Now()
 	var meta MetadataEntrenamiento
 	var dataset []models.PerfilPaciente
 
@@ -113,7 +130,11 @@ func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPacien
 	close(parsedResults)
 	<-done
 
-	return meta, dataset
+	return ResultadoCarga{
+		Meta:                 meta,
+		Dataset:              dataset,
+		TiempoRecepcionParse: time.Since(inicio),
+	}
 }
 
 func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int) {
@@ -126,14 +147,11 @@ func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int)
 	case "softmax":
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarSoftmax(chunks, 0.01)
-		fmt.Println("[SOFTMAX] Entrenamiento iterativo concluido exitosamente.")
 	case "random_forest":
 		engine.EntrenarRandomForest(dataset, 10)
-		fmt.Println("[RANDOM FOREST] Consolidacion de 10 arboles concluida exitosamente.")
 	case "naive_bayes":
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarNaiveBayes(chunks)
-		fmt.Println("[NAIVE BAYES] Map-Reduce estadistico concluido exitosamente.")
 	default:
 		fmt.Printf("[WARN] Algoritmo no soportado: %s\n", algoritmo)
 	}
