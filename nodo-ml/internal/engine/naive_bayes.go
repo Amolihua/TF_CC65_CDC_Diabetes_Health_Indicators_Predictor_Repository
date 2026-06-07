@@ -77,17 +77,14 @@ func EntrenarNaiveBayes(chunks [][]models.PerfilPaciente) NaiveBayesModel {
 // Aplica suavizado de Laplace y calcula parámetros paramétricos
 func construirModelo(global LocalStats) NaiveBayesModel {
 	var modelo NaiveBayesModel
-	totalMuestras := global.ConteoClase[0] + global.ConteoClase[1] + global.ConteoClase[2]
 
 	for c := 0; c < 3; c++ {
 		nClase := float64(global.ConteoClase[c])
 		if nClase == 0 {
 			continue
 		}
-
-		modelo.ProbPriori[c] = nClase / float64(totalMuestras)
-
-		// Parámetros de Distribución Gaussiana
+		// Class Weights Balanced: Priors Uniformes anulan el sesgo de la clase mayoritaria
+		modelo.ProbPriori[c] = 1.0 / 3.0
 		for k := 0; k < 3; k++ {
 			media := global.SumaContinuas[c][k] / nClase
 			varianza := (global.SumaSqContinuas[c][k] / nClase) - (media * media)
@@ -97,7 +94,6 @@ func construirModelo(global LocalStats) NaiveBayesModel {
 
 		// Distribución Multinomial + Suavizado Laplace
 		for f := 0; f < 21; f++ {
-			// Corrección: El denominador debe usar la cardinalidad real del arreglo iterado (100) para asegurar masa probabilística total = 1.0
 			denominador := nClase + 100.0
 			for v := 0; v < 100; v++ {
 				modelo.ProbCategoricas[c][f][v] = (float64(global.FreqCategoricas[c][f][v]) + 1.0) / denominador

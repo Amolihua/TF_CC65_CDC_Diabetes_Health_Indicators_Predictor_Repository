@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"nodo-ml/internal/engine"
+	"nodo-ml/internal/evaluation"
 	"nodo-ml/internal/models"
 )
 
@@ -125,15 +126,18 @@ func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int)
 	switch algoritmo {
 	case "softmax":
 		chunks := particionarDatos(dataset, chunkSize)
-		engine.EntrenarSoftmax(chunks, 0.01)
+		engine.EntrenarSoftmax(chunks, 0.005, 150)
 		fmt.Println("[SOFTMAX] Entrenamiento iterativo concluido exitosamente.")
+		evaluation.EjecutarCrossValidation(dataset, "softmax")
 	case "random_forest":
-		engine.EntrenarRandomForest(dataset, 10)
-		fmt.Println("[RANDOM FOREST] Consolidacion de 10 arboles concluida exitosamente.")
+		engine.EntrenarRandomForest(dataset, 50, numWorkers)
+		fmt.Println("[RANDOM FOREST] Consolidacion de 50 arboles concluida exitosamente.")
+		evaluation.EjecutarCrossValidation(dataset, "random_forest")
 	case "naive_bayes":
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarNaiveBayes(chunks)
 		fmt.Println("[NAIVE BAYES] Map-Reduce estadistico concluido exitosamente.")
+		evaluation.EjecutarCrossValidation(dataset, "naive_bayes")
 	default:
 		fmt.Printf("[WARN] Algoritmo no soportado: %s\n", algoritmo)
 	}

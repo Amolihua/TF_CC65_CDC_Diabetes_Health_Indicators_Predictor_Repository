@@ -17,8 +17,8 @@ type TreeNode struct {
 	IsLeaf       bool
 }
 
-// Construye N árboles de decisión concurrentemente
-func EntrenarRandomForest(data []models.PerfilPaciente, numTrees int) []*TreeNode {
+// Construye N árboles de decisión concurrentemente, limitados por numWorkers
+func EntrenarRandomForest(data []models.PerfilPaciente, numTrees int, numWorkers int) []*TreeNode {
 	var wg sync.WaitGroup
 	bosque := make([]*TreeNode, numTrees)
 
@@ -27,11 +27,16 @@ func EntrenarRandomForest(data []models.PerfilPaciente, numTrees int) []*TreeNod
 		dataPtrs[i] = &data[i]
 	}
 
+	// Semáforo síncrono para limitar las goroutines concurrentes activas
+	sem := make(chan struct{}, numWorkers)
+
 	// Worker Pool
 	for i := 0; i < numTrees; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
 			// Bagging usando punteros
 			sample := make([]*models.PerfilPaciente, len(dataPtrs))
@@ -39,7 +44,7 @@ func EntrenarRandomForest(data []models.PerfilPaciente, numTrees int) []*TreeNod
 			for j := 0; j < len(dataPtrs); j++ {
 				sample[j] = dataPtrs[rng.Intn(len(dataPtrs))]
 			}
-			bosque[index] = buildTree(sample, 0, 10, 50, rng)
+			bosque[index] = buildTree(sample, 0, 20, 50, rng)
 		}(i)
 	}
 
@@ -58,20 +63,23 @@ func buildTree(data []*models.PerfilPaciente, depth, maxDepth, minSamples int, r
 
 	var sum float64
 	for _, p := range data {
-		val := extraerUnFeature(p, featureIndex)
+		val := ExtraerUnFeature(p, featureIndex)
 		sum += val
 	}
 	threshold := sum / float64(len(data))
-
-	var leftData, rightData []*models.PerfilPaciente
-	for _, p := range data {
-		val := extraerUnFeature(p, featureIndex)
+	i := 0
+	j := len(data) - 1
+	for i <= j {
+		val := ExtraerUnFeature(data[i], featureIndex)
 		if val <= threshold {
-			leftData = append(leftData, p)
+			i++
 		} else {
-			rightData = append(rightData, p)
+			data[i], data[j] = data[j], data[i]
+			j--
 		}
 	}
+	leftData := data[:i]
+	rightData := data[i:]
 
 	if len(leftData) == 0 || len(rightData) == 0 {
 		return &TreeNode{IsLeaf: true, Value: majorityClass(data)}
@@ -86,17 +94,20 @@ func buildTree(data []*models.PerfilPaciente, depth, maxDepth, minSamples int, r
 	}
 }
 
-// Devuelve la clase más frecuente
+// Devuelve la clase ganadora aplicando Pesos de Clase (Class Weights)
 func majorityClass(data []*models.PerfilPaciente) uint8 {
 	var counts [3]int
 	for _, p := range data {
 		counts[p.Diabetes012]++
 	}
-	maxCount := -1
+	pesos := [3]float64{0.5, 30.0, 4.0}
+
+	maxScore := -1.0
 	var maxClass uint8
 	for c, count := range counts {
-		if count > maxCount {
-			maxCount = count
+		score := float64(count) * pesos[c]
+		if score > maxScore {
+			maxScore = score
 			maxClass = uint8(c)
 		}
 	}
@@ -104,7 +115,7 @@ func majorityClass(data []*models.PerfilPaciente) uint8 {
 }
 
 // Optimización: Extraer solo el feature necesario, evitando asignar arreglos de 22 floats por cada nodo
-func extraerUnFeature(p *models.PerfilPaciente, index int) float64 {
+func ExtraerUnFeature(p *models.PerfilPaciente, index int) float64 {
 	switch index {
 	case 0:
 		return float64(p.HighBP)

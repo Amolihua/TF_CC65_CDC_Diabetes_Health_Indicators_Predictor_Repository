@@ -146,9 +146,9 @@ func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int)
 	switch algoritmo {
 	case "softmax":
 		chunks := particionarDatos(dataset, chunkSize)
-		engine.EntrenarSoftmax(chunks, 0.01)
+		engine.EntrenarSoftmax(chunks, 0.005, 150)
 	case "random_forest":
-		engine.EntrenarRandomForest(dataset, 10)
+		engine.EntrenarRandomForest(dataset, 50, numWorkers)
 	case "naive_bayes":
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarNaiveBayes(chunks)
