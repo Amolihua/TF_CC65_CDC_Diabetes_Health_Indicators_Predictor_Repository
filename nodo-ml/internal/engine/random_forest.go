@@ -58,7 +58,6 @@ func buildTree(data []*models.PerfilPaciente, depth, maxDepth, minSamples int, r
 		return &TreeNode{IsLeaf: true, Value: majorityClass(data)}
 	}
 
-	// Selecciona un feature aleatorio
 	featureIndex := rng.Intn(21)
 
 	var sum float64
@@ -94,7 +93,6 @@ func buildTree(data []*models.PerfilPaciente, depth, maxDepth, minSamples int, r
 	}
 }
 
-// Devuelve la clase ganadora aplicando Pesos de Clase (Class Weights)
 func majorityClass(data []*models.PerfilPaciente) uint8 {
 	var counts [3]int
 	for _, p := range data {
