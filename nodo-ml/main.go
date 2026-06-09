@@ -47,6 +47,7 @@ func manejarConexion(conn net.Conn) {
 	tiempoEntrenamiento := time.Since(inicioEntrenamiento)
 
 	fmt.Fprintf(conn, "OK registros=%d workers=%d carga_total=%s entrenamiento=%s\n", len(dataset), numWorkers, time.Since(inicio), tiempoEntrenamiento)
+	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Total: %s | Entrenamiento: %s\n", len(dataset), time.Since(inicio), tiempoEntrenamiento)
 }
 
 func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPaciente) {
