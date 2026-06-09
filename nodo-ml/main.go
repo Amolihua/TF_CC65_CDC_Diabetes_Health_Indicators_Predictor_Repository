@@ -128,16 +128,16 @@ func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int)
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarSoftmax(chunks, 0.005, 150)
 		fmt.Println("[SOFTMAX] Entrenamiento iterativo concluido exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "softmax")
+		evaluation.EjecutarCrossValidation(dataset, "softmax", numWorkers)
 	case "random_forest":
 		engine.EntrenarRandomForest(dataset, 50, numWorkers)
 		fmt.Println("[RANDOM FOREST] Consolidacion de 50 arboles concluida exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "random_forest")
+		evaluation.EjecutarCrossValidation(dataset, "random_forest", numWorkers)
 	case "naive_bayes":
 		chunks := particionarDatos(dataset, chunkSize)
 		engine.EntrenarNaiveBayes(chunks)
 		fmt.Println("[NAIVE BAYES] Map-Reduce estadistico concluido exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "naive_bayes")
+		evaluation.EjecutarCrossValidation(dataset, "naive_bayes", numWorkers)
 	default:
 		fmt.Printf("[WARN] Algoritmo no soportado: %s\n", algoritmo)
 	}

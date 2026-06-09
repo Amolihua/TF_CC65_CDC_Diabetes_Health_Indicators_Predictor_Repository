@@ -3,6 +3,7 @@ package evaluation
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"nodo-ml/internal/engine"
 	"nodo-ml/internal/models"
@@ -106,7 +107,7 @@ func predecirArbol(p *models.PerfilPaciente, nodo *engine.TreeNode) uint8 {
 	return predecirArbol(p, nodo.Right)
 }
 
-func EjecutarCrossValidation(data []models.PerfilPaciente, algoritmo string) {
+func EjecutarCrossValidation(data []models.PerfilPaciente, algoritmo string, numWorkers int) {
 	var confusionMatrix [3][3]int
 	foldSize := len(data) / 5
 
@@ -132,26 +133,77 @@ func EjecutarCrossValidation(data []models.PerfilPaciente, algoritmo string) {
 		if algoritmo == "softmax" {
 			engine.GlobalWeights = [3][22]float64{}
 			engine.EntrenarSoftmax(chunks, 0.005, 150)
-			for _, p := range testData {
-				pred := PredecirSoftmax(p)
-				confusionMatrix[p.Diabetes012][pred]++
-			}
+			matrizFold := predecirConcurrenteMapReduce(testData, numWorkers, func(p models.PerfilPaciente) int {
+				return int(PredecirSoftmax(p))
+			})
+			sumarMatrices(&confusionMatrix, matrizFold)
 		} else if algoritmo == "naive_bayes" {
 			modelo := engine.EntrenarNaiveBayes(chunks)
-			for _, p := range testData {
-				pred := PredecirNaiveBayes(p, modelo)
-				confusionMatrix[p.Diabetes012][pred]++
-			}
+			matrizFold := predecirConcurrenteMapReduce(testData, numWorkers, func(p models.PerfilPaciente) int {
+				return int(PredecirNaiveBayes(p, modelo))
+			})
+			sumarMatrices(&confusionMatrix, matrizFold)
 		} else if algoritmo == "random_forest" {
-			bosque := engine.EntrenarRandomForest(trainData, 50, 16)
-			for _, p := range testData {
-				pred := PredecirRandomForest(p, bosque)
-				confusionMatrix[p.Diabetes012][pred]++
-			}
+			bosque := engine.EntrenarRandomForest(trainData, 50, numWorkers)
+			matrizFold := predecirConcurrenteMapReduce(testData, numWorkers, func(p models.PerfilPaciente) int {
+				return int(PredecirRandomForest(p, bosque))
+			})
+			sumarMatrices(&confusionMatrix, matrizFold)
 		}
 	}
 
 	procesarYMostrarResultados(confusionMatrix)
+}
+
+func sumarMatrices(dest *[3][3]int, src [3][3]int) {
+	for r := 0; r < 3; r++ {
+		for c := 0; c < 3; c++ {
+			dest[r][c] += src[r][c]
+		}
+	}
+}
+
+func predecirConcurrenteMapReduce(testData []models.PerfilPaciente, numWorkers int, predictFn func(models.PerfilPaciente) int) [3][3]int {
+	var wg sync.WaitGroup
+	chunkSize := len(testData) / numWorkers
+	if chunkSize == 0 {
+		chunkSize = 1
+	}
+
+	matricesLocales := make([][3][3]int, numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if i == numWorkers-1 {
+			end = len(testData)
+		}
+		if start >= len(testData) {
+			break
+		}
+
+		wg.Add(1)
+		go func(idx int, dataChunk []models.PerfilPaciente) {
+			defer wg.Done()
+			var localMatrix [3][3]int
+			for _, p := range dataChunk {
+				pred := predictFn(p)
+				localMatrix[p.Diabetes012][pred]++
+			}
+			matricesLocales[idx] = localMatrix
+		}(i, testData[start:end])
+	}
+	wg.Wait()
+
+	var matrizGlobal [3][3]int
+	for _, localMatrix := range matricesLocales {
+		for r := 0; r < 3; r++ {
+			for c := 0; c < 3; c++ {
+				matrizGlobal[r][c] += localMatrix[r][c]
+			}
+		}
+	}
+	return matrizGlobal
 }
 
 // Calcula e imprime las métricas analíticas
