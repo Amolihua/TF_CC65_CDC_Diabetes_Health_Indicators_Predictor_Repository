@@ -11,73 +11,93 @@ var GlobalWeights [3][22]float64
 var mu sync.Mutex
 
 // Regresión Logística Multinomial concurrentemente
-func EntrenarSoftmax(chunks [][]models.PerfilPaciente, learningRate float64) {
-	var wg sync.WaitGroup
-
+func EntrenarSoftmax(chunks [][]models.PerfilPaciente, learningRate float64, epochs int) {
+	var conteo [3]int
+	var total int
 	for _, chunk := range chunks {
-		wg.Add(1)
-		// Goroutines
-		go func(data []models.PerfilPaciente) {
-			defer wg.Done()
-
-			// Gradiente acumulado local
-			var localGradients [3][22]float64
-			mu.Lock()
-			currentWeights := GlobalWeights
-			mu.Unlock()
-
-			for _, p := range data {
-				features := extraerFeatures(&p)
-				claseReal := p.Diabetes012
-
-				var logits [3]float64
-				maxLogit := -math.MaxFloat64
-				for c := 0; c < 3; c++ {
-					var z float64
-					for j := 0; j < 22; j++ {
-						z += currentWeights[c][j] * features[j]
-					}
-					logits[c] = z
-					if z > maxLogit {
-						maxLogit = z
-					}
-				}
-
-				var sumaExp float64
-				var probs [3]float64
-				for c := 0; c < 3; c++ {
-					probs[c] = math.Exp(logits[c] - maxLogit)
-					sumaExp += probs[c]
-				}
-
-				for c := 0; c < 3; c++ {
-					probs[c] /= sumaExp
-				}
-
-				// Backpropagation
-				for c := 0; c < 3; c++ {
-					errorClase := probs[c]
-					if c == int(claseReal) {
-						errorClase -= 1.0
-					}
-					for j := 0; j < 22; j++ {
-						localGradients[c][j] += errorClase * features[j]
-					}
-				}
-			}
-
-			mu.Lock()
-			for c := 0; c < 3; c++ {
-				for j := 0; j < 22; j++ {
-					GlobalWeights[c][j] -= learningRate * localGradients[c][j]
-				}
-			}
-			mu.Unlock()
-
-		}(chunk)
+		for _, p := range chunk {
+			conteo[p.Diabetes012]++
+			total++
+		}
+	}
+	var classWeights [3]float64
+	for c := 0; c < 3; c++ {
+		if conteo[c] > 0 {
+			classWeights[c] = float64(total) / (3.0 * float64(conteo[c]))
+		} else {
+			classWeights[c] = 1.0
+		}
 	}
 
-	wg.Wait()
+	for epoch := 0; epoch < epochs; epoch++ {
+		var wg sync.WaitGroup
+
+		for _, chunk := range chunks {
+			wg.Add(1)
+			// Goroutines
+			go func(data []models.PerfilPaciente) {
+				defer wg.Done()
+
+				// Gradiente acumulado local
+				var localGradients [3][22]float64
+				mu.Lock()
+				currentWeights := GlobalWeights
+				mu.Unlock()
+
+				for _, p := range data {
+					features := extraerFeatures(&p)
+					claseReal := p.Diabetes012
+
+					var logits [3]float64
+					maxLogit := -math.MaxFloat64
+					for c := 0; c < 3; c++ {
+						var z float64
+						for j := 0; j < 22; j++ {
+							z += currentWeights[c][j] * features[j]
+						}
+						logits[c] = z
+						if z > maxLogit {
+							maxLogit = z
+						}
+					}
+
+					var sumaExp float64
+					var probs [3]float64
+					for c := 0; c < 3; c++ {
+						probs[c] = math.Exp(logits[c] - maxLogit)
+						sumaExp += probs[c]
+					}
+
+					for c := 0; c < 3; c++ {
+						probs[c] /= sumaExp
+					}
+
+					// Backpropagation con Class Weight Balanced
+					pesoInstancia := classWeights[claseReal]
+					for c := 0; c < 3; c++ {
+						errorClase := probs[c]
+						if c == int(claseReal) {
+							errorClase -= 1.0
+						}
+						for j := 0; j < 22; j++ {
+							localGradients[c][j] += errorClase * features[j] * pesoInstancia
+						}
+					}
+				}
+
+				mu.Lock()
+				for c := 0; c < 3; c++ {
+					for j := 0; j < 22; j++ {
+						GlobalWeights[c][j] -= learningRate * localGradients[c][j]
+					}
+				}
+				mu.Unlock()
+
+			}(chunk)
+		}
+
+		wg.Wait()
+	}
 }
 
 func extraerFeatures(p *models.PerfilPaciente) [22]float64 {

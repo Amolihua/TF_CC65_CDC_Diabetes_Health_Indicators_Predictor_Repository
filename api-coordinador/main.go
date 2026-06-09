@@ -34,7 +34,7 @@ func main() {
 	conn, _ := net.Dial("tcp", nodoAddr)
 	defer conn.Close()
 
-	algoritmoAEntrenar := "softmax"
+	algoritmoAEntrenar := "random_forest"
 	bufWriter := bufio.NewWriterSize(conn, 256*1024)
 	fmt.Fprintf(bufWriter, `{"algoritmo":%q,"num_workers":%d}`+"\n", algoritmoAEntrenar, numWorkers)
 
