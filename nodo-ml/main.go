@@ -6,20 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"nodo-ml/internal/engine"
+	"nodo-ml/internal/models"
 	"os"
 	"runtime"
 	"strconv"
 	"sync"
 	"time"
-
-	"nodo-ml/internal/engine"
-	"nodo-ml/internal/evaluation"
-	"nodo-ml/internal/models"
 )
 
 type MetadataEntrenamiento struct {
 	Algoritmo      string `json:"algoritmo"`
 	NumWorkers     int    `json:"num_workers"`
+	NumTrees       int    `json:"num_trees,omitempty"`
 	TotalRegistros int    `json:"total_registros,omitempty"`
 }
 
@@ -43,10 +42,28 @@ func manejarConexion(conn net.Conn) {
 	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d\n", meta.Algoritmo, len(dataset), numWorkers)
 
 	inicioEntrenamiento := time.Now()
-	entrenar(meta.Algoritmo, dataset, numWorkers)
+
+	var respuestaBinaria []byte
+	if meta.Algoritmo == "random_forest" {
+		numTrees := meta.NumTrees
+		if numTrees == 0 {
+			numTrees = 10
+		}
+		bosque := engine.EntrenarRandomForest(dataset, numTrees, numWorkers)
+
+		for _, arbol := range bosque {
+			bytesArbol := engine.SerializeTree(arbol)
+			respuestaBinaria = append(respuestaBinaria, bytesArbol...)
+		}
+	} else {
+		fmt.Printf("[WARN] Algoritmo no soportado para clúster: %s\n", meta.Algoritmo)
+	}
+
 	tiempoEntrenamiento := time.Since(inicioEntrenamiento)
 
-	fmt.Fprintf(conn, "OK registros=%d workers=%d carga_total=%s entrenamiento=%s\n", len(dataset), numWorkers, time.Since(inicio), tiempoEntrenamiento)
+	// Enviar respuesta binaria directa
+	_, _ = conn.Write(respuestaBinaria)
+
 	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Total: %s | Entrenamiento: %s\n", len(dataset), time.Since(inicio), tiempoEntrenamiento)
 }
 
@@ -70,23 +87,12 @@ func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPacien
 	rawJobs := make(chan []byte, 10000)
 	parsedResults := make(chan models.PerfilPaciente, 10000)
 	var wg sync.WaitGroup
-	var bytePool sync.Pool
-
-	bytePool.New = func() any {
-		buf := make([]byte, 0, 1024)
-		return &buf
-	}
-
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for raw := range rawJobs {
 				parsedResults <- parsearPerfilCompacto(raw)
-				if cap(raw) <= 64*1024 {
-					raw = raw[:0]
-					bytePool.Put(&raw)
-				}
 			}
 		}()
 	}
@@ -105,8 +111,8 @@ func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPacien
 			continue
 		}
 
-		bufPtr := bytePool.Get().(*[]byte)
-		clon := append((*bufPtr)[:0], linea...)
+		clon := make([]byte, len(linea))
+		copy(clon, linea)
 		rawJobs <- clon
 	}
 
@@ -116,32 +122,6 @@ func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPacien
 	<-done
 
 	return meta, dataset
-}
-
-func entrenar(algoritmo string, dataset []models.PerfilPaciente, numWorkers int) {
-	chunkSize := len(dataset) / numWorkers
-	if chunkSize == 0 {
-		chunkSize = 1
-	}
-
-	switch algoritmo {
-	case "softmax":
-		chunks := particionarDatos(dataset, chunkSize)
-		engine.EntrenarSoftmax(chunks, 0.005, 150)
-		fmt.Println("[SOFTMAX] Entrenamiento iterativo concluido exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "softmax", numWorkers)
-	case "random_forest":
-		engine.EntrenarRandomForest(dataset, 50, numWorkers)
-		fmt.Println("[RANDOM FOREST] Consolidacion de 50 arboles concluida exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "random_forest", numWorkers)
-	case "naive_bayes":
-		chunks := particionarDatos(dataset, chunkSize)
-		engine.EntrenarNaiveBayes(chunks)
-		fmt.Println("[NAIVE BAYES] Map-Reduce estadistico concluido exitosamente.")
-		evaluation.EjecutarCrossValidation(dataset, "naive_bayes", numWorkers)
-	default:
-		fmt.Printf("[WARN] Algoritmo no soportado: %s\n", algoritmo)
-	}
 }
 
 func resolverWorkers(valor int) int {
@@ -190,16 +170,4 @@ func parseUint8Bytes(valor []byte) uint8 {
 func parseFloatBytes(valor []byte) float64 {
 	numero, _ := strconv.ParseFloat(string(valor), 64)
 	return numero
-}
-
-func particionarDatos(data []models.PerfilPaciente, size int) [][]models.PerfilPaciente {
-	chunks := make([][]models.PerfilPaciente, 0, (len(data)+size-1)/size)
-	for i := 0; i < len(data); i += size {
-		end := i + size
-		if end > len(data) {
-			end = len(data)
-		}
-		chunks = append(chunks, data[i:end])
-	}
-	return chunks
 }
