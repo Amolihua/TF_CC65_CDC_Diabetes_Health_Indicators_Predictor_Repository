@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   api-coordinador:
@@ -8,7 +7,9 @@ services:
     environment:
       - NODOS_ML_ADDRS=nodo-ml-1:9000,nodo-ml-2:9000,nodo-ml-3:9000,nodo-ml-4:9000,nodo-ml-5:9000
       - NUM_WORKERS=12
-      - DATASET_PATH=/datos_raw/diabetes_012_health_indicators_BRFSS2015.csv
+      - DATASET_PATH=/datos_raw/diabetes_1M_extended.csv
+    ports:
+      - "8080:8080"
     volumes:
       - ./datos_raw:/datos_raw
 
