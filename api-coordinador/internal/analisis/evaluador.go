@@ -11,7 +11,7 @@ import (
 	"api-coordinador/internal/models"
 )
 
-func EvaluarBosqueDistribuido(testDataRaw [][]byte, bosque []*models.TreeNode, numWorkers int) {
+func EvaluarBosqueDistribuido(testDataRaw [][]byte, bosque []*models.TreeNode, numWorkers int) [3][3]int {
 	fmt.Printf("\n[EVALUACIÓN CENTRALIZADA] Iniciando evaluación sobre %d registros con bosque de %d árboles...\n", len(testDataRaw), len(bosque))
 	inicio := time.Now()
 
@@ -65,6 +65,7 @@ func EvaluarBosqueDistribuido(testDataRaw [][]byte, bosque []*models.TreeNode, n
 	tiempo := time.Since(inicio)
 	fmt.Printf("[EVALUACIÓN] Map-Reduce completado en %s\n", tiempo)
 	procesarYMostrarResultados(globalMatrix)
+	return globalMatrix
 }
 
 func PredecirRandomForest(p models.PerfilPaciente, bosque []*models.TreeNode) uint8 {

@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -17,69 +19,85 @@ import (
 	"api-coordinador/internal/models"
 )
 
-func main() {
-	inicio := time.Now()
+// Estado Global Protegido
+var (
+	bosqueGlobal []*models.TreeNode
+	matrizGlobal [3][3]int
+	rwMutex      sync.RWMutex
+)
 
+func main() {
+	http.HandleFunc("/api/train", handleTrain)
+	http.HandleFunc("/api/predict", handlePredict)
+	http.HandleFunc("/api/metrics", handleMetrics)
+
+	fmt.Println("[API-REST] Servidor HTTP de escucha perpetua iniciado en :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Printf("[CRÍTICO] Fallo en el servidor HTTP: %v\n", err)
+	}
+}
+
+func handleTrain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	inicio := time.Now()
 	numWorkers := leerEnteroEnv("NUM_WORKERS", 12)
 	datasetPath := os.Getenv("DATASET_PATH")
 	if datasetPath == "" {
 		datasetPath = "../datos_raw/diabetes_1M_extended.csv"
 	}
 
-	// 1. Decoupling de Red
 	nodosStr := os.Getenv("NODOS_ML_ADDRS")
 	if nodosStr == "" {
 		nodosStr = "localhost:9000"
 	}
 	nodosAddrs := strings.Split(nodosStr, ",")
 	numNodos := len(nodosAddrs)
-	fmt.Printf("[API-COORDINADOR] Iniciando clúster con %d nodos.\n", numNodos)
 
+	// Pipeline de ingesta y partición
 	jobs := make(chan []string, 10000)
 	go loader.LeerCSVMasivo(datasetPath, jobs)
 	canalLimpio := limpieza.IniciarWorkerPoolCompacto(numWorkers, jobs)
 
-	// 2. Conectar a los Nodos
 	var writers []*bufio.Writer
 	var conns []net.Conn
-
-	// Calcular árboles por nodo con distribución exacta
 	baseTrees := 50 / numNodos
 	remainder := 50 % numNodos
 
+	// Conexión a nodos esclavos TCP
 	for i, addr := range nodosAddrs {
 		conn, err := net.Dial("tcp", strings.TrimSpace(addr))
 		if err != nil {
-			fmt.Printf("[ERROR] No se pudo conectar a %s: %v\n", addr, err)
 			continue
 		}
 		conns = append(conns, conn)
-		w := bufio.NewWriterSize(conn, 256*1024)
+		writer := bufio.NewWriterSize(conn, 256*1024)
 
 		treesPerNode := baseTrees
 		if i < remainder {
 			treesPerNode++
 		}
-
-		// Metadatos iniciales
-		fmt.Fprintf(w, `{"algoritmo":"random_forest","num_workers":%d,"num_trees":%d}`+"\n", numWorkers, treesPerNode)
-		writers = append(writers, w)
+		fmt.Fprintf(writer, `{"algoritmo":"random_forest","num_workers":%d,"num_trees":%d}`+"\n", numWorkers, treesPerNode)
+		writers = append(writers, writer)
 	}
 
 	if len(writers) == 0 {
-		panic("[CRÍTICO] No hay nodos disponibles. Abortando.")
+		http.Error(w, "No hay nodos ML disponibles", http.StatusInternalServerError)
+		return
 	}
 
 	var testDataRaw [][]byte
-	count := 0
-	nodeIndex := 0
+	count, nodeIndex := 0, 0
 
-	// 3. Sharding Dinámico y Split 80/20 Al Vuelo
+	// Sharding y 20% retención local
 	for jsonBytes := range canalLimpio {
 		if count%10 < 8 {
-			w := writers[nodeIndex]
-			_, _ = w.Write(jsonBytes)
-			_ = w.WriteByte('\n')
+			writer := writers[nodeIndex]
+			_, _ = writer.Write(jsonBytes)
+			_ = writer.WriteByte('\n')
 			nodeIndex = (nodeIndex + 1) % len(writers)
 		} else {
 			clone := make([]byte, len(jsonBytes))
@@ -89,53 +107,96 @@ func main() {
 		count++
 	}
 
-	// Cerrar flujos de escritura
-	for i, w := range writers {
-		_ = w.Flush()
+	// Cerrar flujos TCP
+	for i, writer := range writers {
+		_ = writer.Flush()
 		if tcpConn, ok := conns[i].(*net.TCPConn); ok {
 			_ = tcpConn.CloseWrite()
 		}
 	}
 
-	fmt.Printf("[API-COORDINADOR] Datos distribuidos (Total: %d, Test: %d). Esperando modelos binarios...\n", count, len(testDataRaw))
-
-	// 4. Ensamblaje Asíncrono
 	var wg sync.WaitGroup
-	var bosqueGlobal []*models.TreeNode
+	var nuevoBosque []*models.TreeNode
 	var mu sync.Mutex
 
-	for i, conn := range conns {
+	// Recepción binaria y ensamblaje concurrente
+	for _, conn := range conns {
 		wg.Add(1)
-		go func(c net.Conn, nodeID int) {
+		go func(c net.Conn) {
 			defer wg.Done()
 			defer c.Close()
-
-			// Extraer toda la carga binaria devuelta por el nodo
 			data, err := io.ReadAll(c)
 			if err != nil && err != io.EOF {
-				fmt.Printf("[ERROR] Leyendo del nodo %d: %v\n", nodeID, err)
 				return
 			}
-
-			// Deserializar el bosque de este esclavo
 			subBosque := models.DeserializeForest(data)
-
-			// Exclusión Mutua
 			mu.Lock()
-			bosqueGlobal = append(bosqueGlobal, subBosque...)
+			nuevoBosque = append(nuevoBosque, subBosque...)
 			mu.Unlock()
+		}(conn)
+	}
+	wg.Wait()
 
-			fmt.Printf("[API-COORDINADOR] Recibidos %d árboles del Nodo %s\n", len(subBosque), nodosAddrs[nodeID])
-		}(conn, i)
+	// Evaluación centralizada Map-Reduce
+	nuevaMatriz := analisis.EvaluarBosqueDistribuido(testDataRaw, nuevoBosque, numWorkers)
+	rwMutex.Lock()
+	bosqueGlobal = nuevoBosque
+	matrizGlobal = nuevaMatriz
+	rwMutex.Unlock()
+
+	tiempoTotal := time.Since(inicio).String()
+	fmt.Printf("[API-REST] Entrenamiento finalizado. Tiempo: %s\n", tiempoTotal)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":       "Entrenamiento finalizado exitosamente",
+		"time_elapsed": tiempoTotal,
+	})
+}
+
+func handlePredict(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
 	}
 
-	wg.Wait()
-	fmt.Printf("[API-COORDINADOR] Bosque global ensamblado exitosamente con %d árboles.\n", len(bosqueGlobal))
+	var p models.PerfilPaciente
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "Carga JSON inválida", http.StatusBadRequest)
+		return
+	}
 
-	// 5. Evaluación Centralizada
-	analisis.EvaluarBosqueDistribuido(testDataRaw, bosqueGlobal, numWorkers)
+	// Inferencia con Bloqueo Compartido
+	rwMutex.RLock()
+	bosqueLocal := bosqueGlobal
+	rwMutex.RUnlock()
 
-	fmt.Printf("\n[API-COORDINADOR] Pipeline PC4 Finalizado. Tiempo Total: %s\n", time.Since(inicio))
+	if len(bosqueLocal) == 0 {
+		http.Error(w, "El modelo aún no ha sido entrenado", http.StatusServiceUnavailable)
+		return
+	}
+
+	clase := analisis.PredecirRandomForest(p, bosqueLocal)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]uint8{"prediction": clase})
+}
+
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Lectura de métricas con Bloqueo Compartido
+	rwMutex.RLock()
+	matriz := matrizGlobal
+	rwMutex.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"confusion_matrix": matriz,
+	})
 }
 
 func leerEnteroEnv(nombre string, valorDefault int) int {
