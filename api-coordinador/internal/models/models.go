@@ -1,5 +1,18 @@
 package models
 
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+type HistorialPredictivo struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Perfil    PerfilPaciente     `bson:"perfil" json:"perfil"`
+	Diagnosis uint8              `bson:"diagnosis" json:"diagnosis"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+}
+
 type PerfilPaciente struct {
 	Diabetes012          uint8   `json:"diabetes_012"`
 	HighBP               uint8   `json:"high_bp"`

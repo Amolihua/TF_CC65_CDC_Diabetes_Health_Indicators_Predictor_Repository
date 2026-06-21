@@ -8,40 +8,63 @@ services:
       - NODOS_ML_ADDRS=nodo-ml-1:9000,nodo-ml-2:9000,nodo-ml-3:9000,nodo-ml-4:9000,nodo-ml-5:9000
       - NUM_WORKERS=12
       - DATASET_PATH=/datos_raw/diabetes_1M_extended.csv
+      - MONGO_URI=mongodb://mongodb:27017
     ports:
       - "8080:8080"
     volumes:
       - ./datos_raw:/datos_raw
+    networks:
+      - cdc_network
 
 
   nodo-ml-1:
     build:
       context: ./nodo-ml
       dockerfile: Dockerfile
+    networks:
+      - cdc_network
 
 
   nodo-ml-2:
     build:
       context: ./nodo-ml
       dockerfile: Dockerfile
+    networks:
+      - cdc_network
 
 
   nodo-ml-3:
     build:
       context: ./nodo-ml
       dockerfile: Dockerfile
+    networks:
+      - cdc_network
 
 
   nodo-ml-4:
     build:
       context: ./nodo-ml
       dockerfile: Dockerfile
+    networks:
+      - cdc_network
 
 
   nodo-ml-5:
     build:
       context: ./nodo-ml
       dockerfile: Dockerfile
+    networks:
+      - cdc_network
+
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo_data:/data/db
+    networks:
+      - cdc_network
 
 
 networks:
