@@ -4,14 +4,10 @@ import (
 	"bufio"
 	"encoding/csv"
 	"io"
-	"os"
 )
 
-func LeerCSVMasivo(filePath string, jobs chan<- []string) {
-	file, _ := os.Open(filePath)
-	defer file.Close()
-
-	bufferedReader := bufio.NewReaderSize(file, 64*1024*1024)
+func LeerCSVMasivo(r io.Reader, jobs chan<- []string) {
+	bufferedReader := bufio.NewReaderSize(r, 64*1024*1024)
 	reader := csv.NewReader(bufferedReader)
 	_, _ = reader.Read()
 
