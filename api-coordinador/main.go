@@ -18,6 +18,11 @@ import (
 	"api-coordinador/internal/loader"
 	"api-coordinador/internal/models"
 
+	"context"
+
+	"github.com/golang-jwt/jwt/v5"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -27,6 +32,8 @@ var (
 	matrizGlobal [3][3]int
 	rwMutex      sync.RWMutex
 	jwtSecret    = []byte("secreto-super-seguro-pc4")
+	mongoClient  *mongo.Client
+	historialCol *mongo.Collection
 )
 
 type Credenciales struct {
@@ -35,6 +42,21 @@ type Credenciales struct {
 }
 
 func main() {
+	mongoURI := os.Getenv("MONGO_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+	if err != nil {
+		fmt.Printf("[CRÍTICO] Fallo al conectar con MongoDB: %v\n", err)
+	} else {
+		mongoClient = client
+		historialCol = client.Database("cdc_diabetes").Collection("predicciones")
+		fmt.Println("[API-REST] Conexión establecida con MongoDB en", mongoURI)
+	}
+
 	http.HandleFunc("/api/login", handleLogin)
 	http.HandleFunc("/api/train", JWTMiddleware(handleTrain))
 	http.HandleFunc("/api/predict", handlePredict)
@@ -112,9 +134,33 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 
 	inicio := time.Now()
 	numWorkers := leerEnteroEnv("NUM_WORKERS", 12)
-	datasetPath := os.Getenv("DATASET_PATH")
-	if datasetPath == "" {
-		datasetPath = "../datos_raw/diabetes_1M_extended.csv"
+
+	r.Body = http.MaxBytesReader(w, r.Body, 400<<20) // 400 MB Límite
+	reader, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, "Error al procesar multipart", http.StatusBadRequest)
+		return
+	}
+
+	var filePart io.Reader
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			http.Error(w, "Error leyendo partes", http.StatusInternalServerError)
+			return
+		}
+		if part.FormName() == "dataset" {
+			filePart = part
+			break
+		}
+	}
+
+	if filePart == nil {
+		http.Error(w, "Archivo dataset no encontrado", http.StatusBadRequest)
+		return
 	}
 
 	nodosStr := os.Getenv("NODOS_ML_ADDRS")
@@ -126,7 +172,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 
 	// Pipeline de ingesta y partición
 	jobs := make(chan []string, 10000)
-	go loader.LeerCSVMasivo(datasetPath, jobs)
+	go loader.LeerCSVMasivo(filePart, jobs)
 	canalLimpio := limpieza.IniciarWorkerPoolCompacto(numWorkers, jobs)
 
 	var writers []*bufio.Writer
@@ -245,6 +291,9 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	clase := analisis.PredecirRandomForest(p, bosqueLocal)
 
+	// Persistencia Asíncrona (Fire & Forget)
+	go guardarHistorialEnMongo(p, clase)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]uint8{"prediction": clase})
 }
@@ -272,4 +321,19 @@ func leerEnteroEnv(nombre string, valorDefault int) int {
 		return valorDefault
 	}
 	return valor
+}
+
+func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
+	if historialCol == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	doc := models.HistorialPredictivo{
+		Perfil:    p,
+		Diagnosis: diagnosis,
+		CreatedAt: time.Now(),
+	}
+	_, _ = historialCol.InsertOne(ctx, doc)
 }
