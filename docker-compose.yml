@@ -38,22 +38,6 @@ services:
       - cdc_network
 
 
-  nodo-ml-4:
-    build:
-      context: ./nodo-ml
-      dockerfile: Dockerfile
-    networks:
-      - cdc_network
-
-
-  nodo-ml-5:
-    build:
-      context: ./nodo-ml
-      dockerfile: Dockerfile
-    networks:
-      - cdc_network
-
-
   mongodb:
     image: mongo:latest
     ports:
