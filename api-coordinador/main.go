@@ -22,9 +22,6 @@ import (
 	"context"
 
 	"github.com/golang-jwt/jwt/v5"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -398,9 +395,6 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		rdb.Set(ctxRedisSet, llave, valor, 12*time.Hour)
 		guardarHistorialEnMongo(perfil, valor)
 	}(key, clase, p)
-
-	// Persistencia Asíncrona (Fire & Forget)
-	go guardarHistorialEnMongo(p, clase)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]uint8{"prediction": clase})
