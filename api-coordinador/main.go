@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"api-coordinador/internal/analisis"
@@ -21,19 +22,36 @@ import (
 	"context"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"github.com/golang-jwt/jwt/v5"
 )
+
+// Estructuras Singleflight
+type sfCall struct {
+	wg  sync.WaitGroup
+	val uint8
+}
 
 // Estado Global Protegido
 var (
 	bosqueGlobal []*models.TreeNode
 	matrizGlobal [3][3]int
 	rwMutex      sync.RWMutex
-	jwtSecret    = []byte("secreto-super-seguro-pc4")
+	jwtSecret    []byte
 	mongoClient  *mongo.Client
 	historialCol *mongo.Collection
+	rdb          *redis.Client
+
+	// Observabilidad y Caché
+	modeloVersion uint64 = 1
+	cacheHits     uint64
+	cacheMisses   uint64
+	cacheErrors   uint64
+
+	// Estado Singleflight
+	sfGroup = make(map[string]*sfCall)
+	sfMutex sync.Mutex
 )
 
 type Credenciales struct {
@@ -42,6 +60,12 @@ type Credenciales struct {
 }
 
 func main() {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "secreto-super-seguro-pc4" // Fallback
+	}
+	jwtSecret = []byte(secret)
+
 	mongoURI := os.Getenv("MONGO_URI")
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
@@ -55,6 +79,17 @@ func main() {
 		mongoClient = client
 		historialCol = client.Database("cdc_diabetes").Collection("predicciones")
 		fmt.Println("[API-REST] Conexión establecida con MongoDB en", mongoURI)
+	}
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		fmt.Printf("[API-REST] ADVERTENCIA: Redis inaccesible en %s: %v\n", redisAddr, err)
+	} else {
+		fmt.Printf("[API-REST] Ping exitoso a Redis en %s\n", redisAddr)
 	}
 
 	http.HandleFunc("/api/login", handleLogin)
@@ -106,7 +141,16 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if creds.Username != "admin" || creds.Password != "admin123" {
+	adminUser := os.Getenv("ADMIN_USERNAME")
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+	adminPass := os.Getenv("ADMIN_PASSWORD")
+	if adminPass == "" {
+		adminPass = "admin123"
+	}
+
+	if creds.Username != adminUser || creds.Password != adminPass {
 		http.Error(w, `{"error":"Credenciales incorrectas"}`, http.StatusUnauthorized)
 		return
 	}
@@ -257,6 +301,9 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	matrizGlobal = nuevaMatriz
 	rwMutex.Unlock()
 
+	// Incremento atómico de versión
+	atomic.AddUint64(&modeloVersion, 1)
+
 	tiempoTotal := time.Since(inicio).String()
 	fmt.Printf("[API-REST] Entrenamiento finalizado. Tiempo: %s\n", tiempoTotal)
 
@@ -279,20 +326,75 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := fmt.Sprintf("pred:v%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%f:%f:%d:%d:%d:%d:%d",
+		atomic.LoadUint64(&modeloVersion),
+		p.HighBP, p.HighChol, p.CholCheck, p.BMI, p.Smoker, p.Stroke, p.HeartDiseaseorAttack,
+		p.PhysActivity, p.Fruits, p.Veggies, p.HvyAlcoholConsump, p.AnyHealthcare, p.NoDocbcCost,
+		p.GenHlth, p.MentHlth, p.PhysHlth, p.DiffWalk, p.Sex, p.Age, p.Education, p.Income)
+
+	ctxRedisGet, cancelGet := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancelGet()
+
+	val, err := rdb.Get(ctxRedisGet, key).Result()
+	if err == nil {
+		atomic.AddUint64(&cacheHits, 1)
+		clase, _ := strconv.Atoi(val)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]uint8{"prediction": uint8(clase)})
+		return
+	} else if err == redis.Nil {
+		atomic.AddUint64(&cacheMisses, 1)
+	} else {
+		atomic.AddUint64(&cacheErrors, 1)
+		fmt.Printf("[API-REST] ADVERTENCIA: Error en caché obteniendo clave %s: %v\n", key, err)
+	}
+
+	// Sincronización Singleflight artesanal
+	sfMutex.Lock()
+	if c, ok := sfGroup[key]; ok {
+		sfMutex.Unlock()
+		c.wg.Wait() // Esperar a la petición líder
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]uint8{"prediction": c.val})
+		return
+	}
+	c := new(sfCall)
+	c.wg.Add(1)
+	sfGroup[key] = c
+	sfMutex.Unlock()
+
 	// Inferencia con Bloqueo Compartido
 	rwMutex.RLock()
 	bosqueLocal := bosqueGlobal
 	rwMutex.RUnlock()
 
+	var clase uint8
 	if len(bosqueLocal) == 0 {
 		http.Error(w, "El modelo aún no ha sido entrenado", http.StatusServiceUnavailable)
+		// Liberar Singleflight en error
+		sfMutex.Lock()
+		delete(sfGroup, key)
+		sfMutex.Unlock()
+		c.wg.Done()
 		return
 	}
 
-	clase := analisis.PredecirRandomForest(p, bosqueLocal)
+	clase = analisis.PredecirRandomForest(p, bosqueLocal)
 
-	// Persistencia Asíncrona (Fire & Forget)
-	go guardarHistorialEnMongo(p, clase)
+	// Compartir resultado Singleflight y liberar
+	c.val = clase
+	sfMutex.Lock()
+	delete(sfGroup, key)
+	sfMutex.Unlock()
+	c.wg.Done()
+
+	// Persistencia Asíncrona Combinada (Caché + MongoDB)
+	go func(llave string, valor uint8, perfil models.PerfilPaciente) {
+		ctxRedisSet, cancelSet := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancelSet()
+		rdb.Set(ctxRedisSet, llave, valor, 12*time.Hour)
+		guardarHistorialEnMongo(perfil, valor)
+	}(key, clase, p)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]uint8{"prediction": clase})
@@ -312,6 +414,10 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"confusion_matrix": matriz,
+		"cache_hits":       atomic.LoadUint64(&cacheHits),
+		"cache_misses":     atomic.LoadUint64(&cacheMisses),
+		"cache_errors":     atomic.LoadUint64(&cacheErrors),
+		"modelo_version":   atomic.LoadUint64(&modeloVersion),
 	})
 }
 

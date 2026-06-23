@@ -19,11 +19,11 @@ func DeserializeTree(data []byte) (*TreeNode, int) {
 	if len(data) == 0 {
 		return nil, 0
 	}
-	
+
 	node := &TreeNode{}
 	isLeafFlag := data[0]
 	offset := 1
-	
+
 	if isLeafFlag == 1 {
 		node.IsLeaf = true
 		node.Value = data[offset]
@@ -32,20 +32,20 @@ func DeserializeTree(data []byte) (*TreeNode, int) {
 		node.IsLeaf = false
 		node.FeatureIndex = int(data[offset])
 		offset++
-		
+
 		thresholdBits := binary.LittleEndian.Uint64(data[offset : offset+8])
 		node.Threshold = math.Float64frombits(thresholdBits)
 		offset += 8
-		
+
 		leftNode, leftBytesRead := DeserializeTree(data[offset:])
 		node.Left = leftNode
 		offset += leftBytesRead
-		
+
 		rightNode, rightBytesRead := DeserializeTree(data[offset:])
 		node.Right = rightNode
 		offset += rightBytesRead
 	}
-	
+
 	return node, offset
 }
 
