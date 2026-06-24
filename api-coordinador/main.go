@@ -320,6 +320,8 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inicio := time.Now()
+
 	var p models.PerfilPaciente
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "Carga JSON inválida", http.StatusBadRequest)
@@ -340,7 +342,11 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		atomic.AddUint64(&cacheHits, 1)
 		clase, _ := strconv.Atoi(val)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]uint8{"prediction": uint8(clase)})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"prediction":   uint8(clase),
+			"from_cache":   true,
+			"time_elapsed": time.Since(inicio).String(),
+		})
 		return
 	} else if err == redis.Nil {
 		atomic.AddUint64(&cacheMisses, 1)
@@ -355,7 +361,11 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		sfMutex.Unlock()
 		c.wg.Wait() // Esperar a la petición líder
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]uint8{"prediction": c.val})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"prediction":   c.val,
+			"from_cache":   false,
+			"time_elapsed": time.Since(inicio).String(),
+		})
 		return
 	}
 	c := new(sfCall)
@@ -397,7 +407,11 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 	}(key, clase, p)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]uint8{"prediction": clase})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"prediction":   clase,
+		"from_cache":   false,
+		"time_elapsed": time.Since(inicio).String(),
+	})
 }
 
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
