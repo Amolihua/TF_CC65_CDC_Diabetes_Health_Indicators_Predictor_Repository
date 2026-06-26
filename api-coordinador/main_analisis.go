@@ -23,7 +23,14 @@ func main() {
 
 	jobs := make(chan []string, 10000)
 
-	go loader.LeerCSVMasivo(datasetPath, jobs)
+	file, err := os.Open(datasetPath)
+	if err != nil {
+		fmt.Printf("Error abriendo el dataset: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	go loader.LeerCSVMasivo(file, jobs)
 
 	canalLimpio := limpieza.IniciarWorkerPool(numWorkers, jobs)
 
