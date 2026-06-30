@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,6 +98,7 @@ func main() {
 	http.HandleFunc("/api/train", JWTMiddleware(handleTrain))
 	http.HandleFunc("/api/predict", handlePredict)
 	http.HandleFunc("/api/metrics", JWTMiddleware(handleMetrics))
+	http.HandleFunc("/api/ws/metrics", handleWSMetrics)
 
 	fmt.Println("[API-REST] Servidor HTTP de escucha perpetua iniciado en :8080")
 	if err := http.ListenAndServe(":8080", corsMiddleware(http.DefaultServeMux)); err != nil {
@@ -479,4 +482,48 @@ func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
 		CreatedAt: time.Now(),
 	}
 	_, _ = historialCol.InsertOne(ctx, doc)
+}
+
+func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get("Sec-WebSocket-Key")
+	h := sha1.New()
+	h.Write([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	accept := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+	conn, bufrw, _ := w.(http.Hijacker).Hijack()
+	bufrw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n")
+	bufrw.Flush()
+
+	go func() {
+		defer conn.Close()
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			rwMutex.RLock()
+			matriz := matrizGlobal
+			rwMutex.RUnlock()
+
+			payload, _ := json.Marshal(map[string]interface{}{
+				"cache_hits":     atomic.LoadUint64(&cacheHits),
+				"cache_misses":   atomic.LoadUint64(&cacheMisses),
+				"cache_errors":   atomic.LoadUint64(&cacheErrors),
+				"modelo_version": atomic.LoadUint64(&modeloVersion),
+				"matriz":         matriz,
+			})
+
+			size := len(payload)
+			var header []byte
+			if size <= 125 {
+				header = []byte{0x81, byte(size)}
+			} else {
+				header = []byte{0x81, 126, byte(size >> 8), byte(size & 255)}
+			}
+
+			// Intercepción de error = Desconexión limpia del cliente
+			if _, err := conn.Write(append(header, payload...)); err != nil {
+				return
+			}
+		}
+	}()
 }
