@@ -1,5 +1,16 @@
 
 services:
+  frontend-spa:
+    build:
+      context: ./frontend-spa
+      dockerfile: Dockerfile
+    ports:
+      - "4200:4200"
+    depends_on:
+      - api-coordinador
+    networks:
+      - cdc_network
+
   api-coordinador:
     build:
       context: ./api-coordinador
