@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ var (
 	cacheHits     uint64
 	cacheMisses   uint64
 	cacheErrors   uint64
+	activeSockets uint64
 
 	// Estado Singleflight
 	sfGroup = make(map[string]*sfCall)
@@ -495,6 +497,8 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 
 	go func() {
+		atomic.AddUint64(&activeSockets, 1)
+		defer atomic.AddUint64(&activeSockets, ^uint64(0))
 		defer conn.Close()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -504,11 +508,17 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 			matriz := matrizGlobal
 			rwMutex.RUnlock()
 
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
 			payload, _ := json.Marshal(map[string]interface{}{
 				"cache_hits":     atomic.LoadUint64(&cacheHits),
 				"cache_misses":   atomic.LoadUint64(&cacheMisses),
 				"cache_errors":   atomic.LoadUint64(&cacheErrors),
 				"modelo_version": atomic.LoadUint64(&modeloVersion),
+				"nodos_activos":  atomic.LoadUint64(&activeSockets),
+				"cpu_goroutines": runtime.NumGoroutine(),
+				"ram_sys_mb":     m.Sys / 1024 / 1024,
 				"matriz":         matriz,
 			})
 
@@ -520,7 +530,7 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 				header = []byte{0x81, 126, byte(size >> 8), byte(size & 255)}
 			}
 
-			// Intercepción de error = Desconexión limpia del cliente
+			// Intercepción de error --> Desconexión limpia del cliente
 			if _, err := conn.Write(append(header, payload...)); err != nil {
 				return
 			}
