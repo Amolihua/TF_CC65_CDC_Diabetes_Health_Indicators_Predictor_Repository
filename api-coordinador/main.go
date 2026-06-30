@@ -98,9 +98,23 @@ func main() {
 	http.HandleFunc("/api/metrics", JWTMiddleware(handleMetrics))
 
 	fmt.Println("[API-REST] Servidor HTTP de escucha perpetua iniciado en :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8080", corsMiddleware(http.DefaultServeMux)); err != nil {
 		fmt.Printf("[CRÍTICO] Fallo en el servidor HTTP: %v\n", err)
 	}
+}
+
+// Inyectar CORS a las respuestas
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Intercepta peticiones, extrae Bearer Token y verifica la expiración
@@ -293,6 +307,15 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 		}(conn)
 	}
 	wg.Wait()
+
+	// Validación integridad distribuida
+	if len(nuevoBosque) != 50 {
+		errMsg := fmt.Sprintf("Error de integridad en el clúster: Se esperaban 50 árboles, pero los nodos devolvieron %d. Entrenamiento abortado.", len(nuevoBosque))
+		fmt.Printf("[CRÍTICO] %s\n", errMsg)
+		http.Error(w, errMsg, http.StatusInternalServerError)
+		return
+	}
+	fmt.Printf("[API-REST] Integridad validada: Se recibieron exactamente %d árboles de los nodos esclavos.\n", len(nuevoBosque))
 
 	// Evaluación centralizada Map-Reduce
 	nuevaMatriz := analisis.EvaluarBosqueDistribuido(testDataRaw, nuevoBosque, numWorkers)

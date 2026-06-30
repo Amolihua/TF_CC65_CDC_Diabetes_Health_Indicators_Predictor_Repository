@@ -39,7 +39,7 @@ func manejarConexion(conn net.Conn) {
 	meta, dataset := recibirDataset(conn)
 	numWorkers := resolverWorkers(meta.NumWorkers)
 
-	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d\n", meta.Algoritmo, len(dataset), numWorkers)
+	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d | arboles_esperados=%d\n", meta.Algoritmo, len(dataset), numWorkers, meta.NumTrees)
 
 	inicioEntrenamiento := time.Now()
 
@@ -64,7 +64,7 @@ func manejarConexion(conn net.Conn) {
 	// Enviar respuesta binaria directa
 	_, _ = conn.Write(respuestaBinaria)
 
-	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Total: %s | Entrenamiento: %s\n", len(dataset), time.Since(inicio), tiempoEntrenamiento)
+	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Árboles generados: %d | Total: %s | Entrenamiento: %s\n", len(dataset), meta.NumTrees, time.Since(inicio), tiempoEntrenamiento)
 }
 
 func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPaciente) {
