@@ -24,8 +24,11 @@ import (
 
 	"context"
 
-	"github.com/golang-jwt/jwt/v5"
+	"crypto/rand"
+	"crypto/sha256"
+
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -56,11 +59,45 @@ var (
 	// Estado Singleflight
 	sfGroup = make(map[string]*sfCall)
 	sfMutex sync.Mutex
+
+	// Telemetría de los Nodos
+	nodeTelemetry sync.Map
 )
 
 type Credenciales struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type NodoMetrics struct {
+	Hostname   string `json:"hostname"`
+	Goroutines int    `json:"goroutines"`
+	RamSysMB   uint64 `json:"ram_sys_mb"`
+	RamAllocMB uint64 `json:"ram_alloc_mb"`
+}
+
+func SeedAdministradores(client *mongo.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	col := client.Database("cdc_diabetes").Collection("admins_nativos")
+	count, err := col.CountDocuments(ctx, bson.M{})
+	if err != nil || count > 0 {
+		return
+	}
+
+	hashPass := fmt.Sprintf("%x", sha256.Sum256([]byte("admin123")))
+	admins := []interface{}{
+		bson.M{"username": "amolihua", "password": string(hashPass)},
+		bson.M{"username": "iansanchez", "password": string(hashPass)},
+		bson.M{"username": "joeturpo", "password": string(hashPass)},
+		bson.M{"username": "jara", "password": string(hashPass)},
+	}
+
+	_, err = col.InsertMany(ctx, admins)
+	if err == nil {
+		fmt.Println("[API-REST] Administradores nativos sembrados en MongoDB exitosamente.")
+	}
 }
 
 func main() {
@@ -83,6 +120,7 @@ func main() {
 		mongoClient = client
 		historialCol = client.Database("cdc_diabetes").Collection("predicciones")
 		fmt.Println("[API-REST] Conexión establecida con MongoDB en", mongoURI)
+		SeedAdministradores(client)
 	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -100,7 +138,9 @@ func main() {
 	http.HandleFunc("/api/train", JWTMiddleware(handleTrain))
 	http.HandleFunc("/api/predict", handlePredict)
 	http.HandleFunc("/api/metrics", JWTMiddleware(handleMetrics))
+	http.HandleFunc("/api/historial", JWTMiddleware(handleHistorial))
 	http.HandleFunc("/api/ws/metrics", handleWSMetrics)
+	http.HandleFunc("/api/internal/telemetry", handleInternalTelemetry)
 
 	fmt.Println("[API-REST] Servidor HTTP de escucha perpetua iniciado en :8080")
 	if err := http.ListenAndServe(":8080", corsMiddleware(http.DefaultServeMux)); err != nil {
@@ -122,28 +162,37 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Intercepta peticiones, extrae Bearer Token y verifica la expiración
+// Middleware de autenticación nativo con Redis
 func JWTMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, `{"error":"No autorizado"}`, http.StatusUnauthorized)
+			http.Error(w, `{"error":"Acceso denegado: Token requerido"}`, http.StatusUnauthorized)
 			return
 		}
 
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("Firma inesperada")
-			}
-			return jwtSecret, nil
-		})
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-		if err != nil || !token.Valid {
-			http.Error(w, `{"error":"Token inválido o expirado"}`, http.StatusUnauthorized)
+		// Validar sesión en Redis
+		username, err := rdb.Get(context.Background(), "session:"+tokenString).Result()
+		if err != nil || username == "" {
+			http.Error(w, `{"error":"Acceso denegado: Sesión inválida o expirada"}`, http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		// Sesión válida, inyectar el usuario en el contexto
+		ctx := context.WithValue(r.Context(), "username", username)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
+func handleInternalTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		return
+	}
+	var metrics NodoMetrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err == nil {
+		nodeTelemetry.Store(metrics.Hostname, metrics)
 	}
 }
 
@@ -160,33 +209,37 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adminUser := os.Getenv("ADMIN_USERNAME")
-	if adminUser == "" {
-		adminUser = "admin"
-	}
-	adminPass := os.Getenv("ADMIN_PASSWORD")
-	if adminPass == "" {
-		adminPass = "admin123"
+	var adminData struct {
+		Username string `bson:"username"`
+		Password string `bson:"password"`
 	}
 
-	if creds.Username != adminUser || creds.Password != adminPass {
+	col := mongoClient.Database("cdc_diabetes").Collection("admins_nativos")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := col.FindOne(ctx, bson.M{"username": creds.Username}).Decode(&adminData)
+	if err != nil {
 		http.Error(w, `{"error":"Credenciales incorrectas"}`, http.StatusUnauthorized)
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"username": creds.Username,
-		"exp":      time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		http.Error(w, "Error generando token", http.StatusInternalServerError)
+	hashInput := fmt.Sprintf("%x", sha256.Sum256([]byte(creds.Password)))
+	if adminData.Password != hashInput {
+		http.Error(w, `{"error":"Credenciales incorrectas"}`, http.StatusUnauthorized)
 		return
 	}
 
+	// Generar Token Nativo de forma Segura (32 bytes = 256 bits)
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := base64.URLEncoding.EncodeToString(tokenBytes)
+
+	// Guardar sesión en Redis por 24 horas
+	rdb.Set(context.Background(), "session:"+token, creds.Username, 24*time.Hour)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
 func handleTrain(w http.ResponseWriter, r *http.Request) {
@@ -350,11 +403,15 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	inicio := time.Now()
 
-	var p models.PerfilPaciente
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	var req struct {
+		models.PerfilPaciente
+		Email string `json:"email,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Carga JSON inválida", http.StatusBadRequest)
 		return
 	}
+	p := req.PerfilPaciente
 
 	key := fmt.Sprintf("pred:v%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%f:%f:%d:%d:%d:%d:%d",
 		atomic.LoadUint64(&modeloVersion),
@@ -427,12 +484,12 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 	c.wg.Done()
 
 	// Persistencia Asíncrona Combinada (Caché + MongoDB)
-	go func(llave string, valor uint8, perfil models.PerfilPaciente) {
+	go func(llave string, valor uint8, perfil models.PerfilPaciente, email string) {
 		ctxRedisSet, cancelSet := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancelSet()
 		rdb.Set(ctxRedisSet, llave, valor, 12*time.Hour)
-		guardarHistorialEnMongo(perfil, valor)
-	}(key, clase, p)
+		guardarHistorialEnMongo(perfil, valor, email)
+	}(key, clase, p, req.Email)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -471,7 +528,7 @@ func leerEnteroEnv(nombre string, valorDefault int) int {
 	return valor
 }
 
-func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
+func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8, email string) {
 	if historialCol == nil {
 		return
 	}
@@ -481,9 +538,40 @@ func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
 	doc := models.HistorialPredictivo{
 		Perfil:    p,
 		Diagnosis: diagnosis,
+		Email:     email,
 		CreatedAt: time.Now(),
 	}
 	_, _ = historialCol.InsertOne(ctx, doc)
+}
+
+func handleHistorial(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}})
+	findOptions.SetLimit(50)
+
+	cursor, err := historialCol.Find(ctx, bson.D{}, findOptions)
+	if err != nil {
+		http.Error(w, "Error al consultar historial", http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var resultados []models.HistorialPredictivo
+	if err = cursor.All(ctx, &resultados); err != nil {
+		http.Error(w, "Error al decodificar historial", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resultados)
 }
 
 func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
@@ -500,7 +588,7 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 		atomic.AddUint64(&activeSockets, 1)
 		defer atomic.AddUint64(&activeSockets, ^uint64(0))
 		defer conn.Close()
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -511,6 +599,13 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 
+			// Recolectar nodos
+			var nodosList []NodoMetrics
+			nodeTelemetry.Range(func(key, value interface{}) bool {
+				nodosList = append(nodosList, value.(NodoMetrics))
+				return true
+			})
+
 			payload, _ := json.Marshal(map[string]interface{}{
 				"cache_hits":     atomic.LoadUint64(&cacheHits),
 				"cache_misses":   atomic.LoadUint64(&cacheMisses),
@@ -520,6 +615,7 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 				"cpu_goroutines": runtime.NumGoroutine(),
 				"ram_sys_mb":     m.Sys / 1024 / 1024,
 				"matriz":         matriz,
+				"cluster_nodes":  nodosList,
 			})
 
 			size := len(payload)

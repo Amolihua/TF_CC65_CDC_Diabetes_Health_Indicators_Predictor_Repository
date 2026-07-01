@@ -21,6 +21,7 @@ export class CitizenComponent {
   constructor() {
     // Estructuración del formulario con enlace directo a las propiedades del backend
     this.form = this.fb.group({
+      email: ['', [Validators.email]],
       high_bp: [0, Validators.required],
       high_chol: [0, Validators.required],
       chol_check: [1, Validators.required],
@@ -64,6 +65,10 @@ export class CitizenComponent {
       sex: Number(raw.sex), age: Number(raw.age),
       education: Number(raw.education), income: Number(raw.income)
     };
+
+    if (raw.email) {
+      (payload as any).email = raw.email;
+    }
 
     this.apiService.predict(payload).subscribe({
       next: (res: any) => {

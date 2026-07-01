@@ -30,4 +30,9 @@ export class ApiService {
   getMetrics(): Observable<any> {
     return this.http.get(`${this.apiUrl}/metrics`);
   }
+
+  // Endpoint para historial
+  getHistorial(): Observable<any> {
+    return this.http.get(`${this.apiUrl}/historial`);
+  }
 }
