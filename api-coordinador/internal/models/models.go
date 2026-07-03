@@ -73,3 +73,15 @@ type ReporteEstadistico struct {
 	MentHlth          MetricasNumericas `json:"ment_hlth"`
 	PhysHlth          MetricasNumericas `json:"phys_hlth"`
 }
+
+type Credenciales struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type NodoMetrics struct {
+	Hostname   string `json:"hostname"`
+	Goroutines int    `json:"goroutines"`
+	RamSysMB   uint64 `json:"ram_sys_mb"`
+	RamAllocMB uint64 `json:"ram_alloc_mb"`
+}
