@@ -103,7 +103,7 @@ func SeedAdministradores(client *mongo.Client) {
 func main() {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "secreto-super-seguro-pc4" // Fallback
+		secret = "secreto-super-seguro-pc4"
 	}
 	jwtSecret = []byte(secret)
 
@@ -230,12 +230,11 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generar Token Nativo de forma Segura (32 bytes = 256 bits)
+	// Generar Token
 	tokenBytes := make([]byte, 32)
 	rand.Read(tokenBytes)
 	token := base64.URLEncoding.EncodeToString(tokenBytes)
 
-	// Guardar sesión en Redis por 24 horas
 	rdb.Set(context.Background(), "session:"+token, creds.Username, 24*time.Hour)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -251,7 +250,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	inicio := time.Now()
 	numWorkers := leerEnteroEnv("NUM_WORKERS", 12)
 
-	r.Body = http.MaxBytesReader(w, r.Body, 400<<20) // 400 MB Límite
+	r.Body = http.MaxBytesReader(w, r.Body, 400<<20)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "Error al procesar multipart", http.StatusBadRequest)
@@ -286,7 +285,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	nodosAddrs := strings.Split(nodosStr, ",")
 	numNodos := len(nodosAddrs)
 
-	// Pipeline de ingesta y partición
+	// Pipeline
 	jobs := make(chan []string, 10000)
 	go loader.LeerCSVMasivo(filePart, jobs)
 	canalLimpio := limpieza.IniciarWorkerPoolCompacto(numWorkers, jobs)
@@ -296,7 +295,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	baseTrees := 50 / numNodos
 	remainder := 50 % numNodos
 
-	// Conexión a nodos esclavos TCP
+	// Conexión TCP
 	for i, addr := range nodosAddrs {
 		conn, err := net.Dial("tcp", strings.TrimSpace(addr))
 		if err != nil {
@@ -321,7 +320,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	var testDataRaw [][]byte
 	count, nodeIndex := 0, 0
 
-	// Sharding y 20% retención local
+	// Sharding
 	for jsonBytes := range canalLimpio {
 		if count%10 < 8 {
 			writer := writers[nodeIndex]
@@ -348,7 +347,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	var nuevoBosque []*models.TreeNode
 	var mu sync.Mutex
 
-	// Recepción binaria y ensamblaje concurrente
+	// Recepción binaria y ensamblaje
 	for _, conn := range conns {
 		wg.Add(1)
 		go func(c net.Conn) {
@@ -366,7 +365,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	// Validación integridad distribuida
+	// Validación
 	if len(nuevoBosque) != 50 {
 		errMsg := fmt.Sprintf("Error de integridad en el clúster: Se esperaban 50 árboles, pero los nodos devolvieron %d. Entrenamiento abortado.", len(nuevoBosque))
 		fmt.Printf("[CRÍTICO] %s\n", errMsg)
@@ -440,11 +439,11 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[API-REST] ADVERTENCIA: Error en caché obteniendo clave %s: %v\n", key, err)
 	}
 
-	// Sincronización Singleflight artesanal
+	// Sincronización Singleflight
 	sfMutex.Lock()
 	if c, ok := sfGroup[key]; ok {
 		sfMutex.Unlock()
-		c.wg.Wait() // Esperar a la petición líder
+		c.wg.Wait()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"prediction":   c.val,
@@ -466,7 +465,7 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 	var clase uint8
 	if len(bosqueLocal) == 0 {
 		http.Error(w, "El modelo aún no ha sido entrenado", http.StatusServiceUnavailable)
-		// Liberar Singleflight en error
+
 		sfMutex.Lock()
 		delete(sfGroup, key)
 		sfMutex.Unlock()
@@ -476,14 +475,13 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	clase = analisis.PredecirRandomForest(p, bosqueLocal)
 
-	// Compartir resultado Singleflight y liberar
 	c.val = clase
 	sfMutex.Lock()
 	delete(sfGroup, key)
 	sfMutex.Unlock()
 	c.wg.Done()
 
-	// Persistencia Asíncrona Combinada (Caché + MongoDB)
+	// Persistencia Asíncrona Combinada
 	go func(llave string, valor uint8, perfil models.PerfilPaciente, email string) {
 		ctxRedisSet, cancelSet := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancelSet()
@@ -505,7 +503,7 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lectura de métricas con Bloqueo Compartido
+	// Lectura de métricas
 	rwMutex.RLock()
 	matriz := matrizGlobal
 	rwMutex.RUnlock()
