@@ -13,7 +13,9 @@ export class WebsocketService {
   }
 
   private connect() {
-    this.socket = new WebSocket('ws://localhost:8080/api/ws/metrics');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    this.socket = new WebSocket(`${protocol}//${host}/api/ws/metrics`);
     
     this.socket.onmessage = (event) => {
       try {
