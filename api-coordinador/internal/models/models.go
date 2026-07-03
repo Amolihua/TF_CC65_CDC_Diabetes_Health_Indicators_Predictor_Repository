@@ -10,6 +10,7 @@ type HistorialPredictivo struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Perfil    PerfilPaciente     `bson:"perfil" json:"perfil"`
 	Diagnosis uint8              `bson:"diagnosis" json:"diagnosis"`
+	Email     string             `bson:"email,omitempty" json:"email,omitempty"`
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 }
 

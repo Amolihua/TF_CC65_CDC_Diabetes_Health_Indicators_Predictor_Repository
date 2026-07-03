@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,11 @@ import (
 
 	"context"
 
-	"github.com/golang-jwt/jwt/v5"
+	"crypto/rand"
+	"crypto/sha256"
+
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -50,10 +54,14 @@ var (
 	cacheHits     uint64
 	cacheMisses   uint64
 	cacheErrors   uint64
+	activeSockets uint64
 
 	// Estado Singleflight
 	sfGroup = make(map[string]*sfCall)
 	sfMutex sync.Mutex
+
+	// Telemetría de los Nodos
+	nodeTelemetry sync.Map
 )
 
 type Credenciales struct {
@@ -61,10 +69,41 @@ type Credenciales struct {
 	Password string `json:"password"`
 }
 
+type NodoMetrics struct {
+	Hostname   string `json:"hostname"`
+	Goroutines int    `json:"goroutines"`
+	RamSysMB   uint64 `json:"ram_sys_mb"`
+	RamAllocMB uint64 `json:"ram_alloc_mb"`
+}
+
+func SeedAdministradores(client *mongo.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	col := client.Database("cdc_diabetes").Collection("admins_nativos")
+	count, err := col.CountDocuments(ctx, bson.M{})
+	if err != nil || count > 0 {
+		return
+	}
+
+	hashPass := fmt.Sprintf("%x", sha256.Sum256([]byte("admin123")))
+	admins := []interface{}{
+		bson.M{"username": "amolihua", "password": string(hashPass)},
+		bson.M{"username": "iansanchez", "password": string(hashPass)},
+		bson.M{"username": "joeturpo", "password": string(hashPass)},
+		bson.M{"username": "jara", "password": string(hashPass)},
+	}
+
+	_, err = col.InsertMany(ctx, admins)
+	if err == nil {
+		fmt.Println("[API-REST] Administradores nativos sembrados en MongoDB exitosamente.")
+	}
+}
+
 func main() {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "secreto-super-seguro-pc4" // Fallback
+		secret = "secreto-super-seguro-pc4"
 	}
 	jwtSecret = []byte(secret)
 
@@ -81,6 +120,7 @@ func main() {
 		mongoClient = client
 		historialCol = client.Database("cdc_diabetes").Collection("predicciones")
 		fmt.Println("[API-REST] Conexión establecida con MongoDB en", mongoURI)
+		SeedAdministradores(client)
 	}
 
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -98,7 +138,9 @@ func main() {
 	http.HandleFunc("/api/train", JWTMiddleware(handleTrain))
 	http.HandleFunc("/api/predict", handlePredict)
 	http.HandleFunc("/api/metrics", JWTMiddleware(handleMetrics))
+	http.HandleFunc("/api/historial", JWTMiddleware(handleHistorial))
 	http.HandleFunc("/api/ws/metrics", handleWSMetrics)
+	http.HandleFunc("/api/internal/telemetry", handleInternalTelemetry)
 
 	fmt.Println("[API-REST] Servidor HTTP de escucha perpetua iniciado en :8080")
 	if err := http.ListenAndServe(":8080", corsMiddleware(http.DefaultServeMux)); err != nil {
@@ -120,28 +162,37 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Intercepta peticiones, extrae Bearer Token y verifica la expiración
+// Middleware de autenticación nativo con Redis
 func JWTMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, `{"error":"No autorizado"}`, http.StatusUnauthorized)
+			http.Error(w, `{"error":"Acceso denegado: Token requerido"}`, http.StatusUnauthorized)
 			return
 		}
 
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("Firma inesperada")
-			}
-			return jwtSecret, nil
-		})
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-		if err != nil || !token.Valid {
-			http.Error(w, `{"error":"Token inválido o expirado"}`, http.StatusUnauthorized)
+		// Validar sesión en Redis
+		username, err := rdb.Get(context.Background(), "session:"+tokenString).Result()
+		if err != nil || username == "" {
+			http.Error(w, `{"error":"Acceso denegado: Sesión inválida o expirada"}`, http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		// Sesión válida, inyectar el usuario en el contexto
+		ctx := context.WithValue(r.Context(), "username", username)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
+func handleInternalTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		return
+	}
+	var metrics NodoMetrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err == nil {
+		nodeTelemetry.Store(metrics.Hostname, metrics)
 	}
 }
 
@@ -158,33 +209,36 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adminUser := os.Getenv("ADMIN_USERNAME")
-	if adminUser == "" {
-		adminUser = "admin"
-	}
-	adminPass := os.Getenv("ADMIN_PASSWORD")
-	if adminPass == "" {
-		adminPass = "admin123"
+	var adminData struct {
+		Username string `bson:"username"`
+		Password string `bson:"password"`
 	}
 
-	if creds.Username != adminUser || creds.Password != adminPass {
+	col := mongoClient.Database("cdc_diabetes").Collection("admins_nativos")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := col.FindOne(ctx, bson.M{"username": creds.Username}).Decode(&adminData)
+	if err != nil {
 		http.Error(w, `{"error":"Credenciales incorrectas"}`, http.StatusUnauthorized)
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"username": creds.Username,
-		"exp":      time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		http.Error(w, "Error generando token", http.StatusInternalServerError)
+	hashInput := fmt.Sprintf("%x", sha256.Sum256([]byte(creds.Password)))
+	if adminData.Password != hashInput {
+		http.Error(w, `{"error":"Credenciales incorrectas"}`, http.StatusUnauthorized)
 		return
 	}
 
+	// Generar Token
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := base64.URLEncoding.EncodeToString(tokenBytes)
+
+	rdb.Set(context.Background(), "session:"+token, creds.Username, 24*time.Hour)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
 func handleTrain(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +250,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	inicio := time.Now()
 	numWorkers := leerEnteroEnv("NUM_WORKERS", 12)
 
-	r.Body = http.MaxBytesReader(w, r.Body, 400<<20) // 400 MB Límite
+	r.Body = http.MaxBytesReader(w, r.Body, 400<<20)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "Error al procesar multipart", http.StatusBadRequest)
@@ -231,7 +285,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	nodosAddrs := strings.Split(nodosStr, ",")
 	numNodos := len(nodosAddrs)
 
-	// Pipeline de ingesta y partición
+	// Pipeline
 	jobs := make(chan []string, 10000)
 	go loader.LeerCSVMasivo(filePart, jobs)
 	canalLimpio := limpieza.IniciarWorkerPoolCompacto(numWorkers, jobs)
@@ -241,7 +295,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	baseTrees := 50 / numNodos
 	remainder := 50 % numNodos
 
-	// Conexión a nodos esclavos TCP
+	// Conexión TCP
 	for i, addr := range nodosAddrs {
 		conn, err := net.Dial("tcp", strings.TrimSpace(addr))
 		if err != nil {
@@ -266,7 +320,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	var testDataRaw [][]byte
 	count, nodeIndex := 0, 0
 
-	// Sharding y 20% retención local
+	// Sharding
 	for jsonBytes := range canalLimpio {
 		if count%10 < 8 {
 			writer := writers[nodeIndex]
@@ -293,7 +347,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	var nuevoBosque []*models.TreeNode
 	var mu sync.Mutex
 
-	// Recepción binaria y ensamblaje concurrente
+	// Recepción binaria y ensamblaje
 	for _, conn := range conns {
 		wg.Add(1)
 		go func(c net.Conn) {
@@ -311,7 +365,7 @@ func handleTrain(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	// Validación integridad distribuida
+	// Validación
 	if len(nuevoBosque) != 50 {
 		errMsg := fmt.Sprintf("Error de integridad en el clúster: Se esperaban 50 árboles, pero los nodos devolvieron %d. Entrenamiento abortado.", len(nuevoBosque))
 		fmt.Printf("[CRÍTICO] %s\n", errMsg)
@@ -348,11 +402,15 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	inicio := time.Now()
 
-	var p models.PerfilPaciente
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	var req struct {
+		models.PerfilPaciente
+		Email string `json:"email,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Carga JSON inválida", http.StatusBadRequest)
 		return
 	}
+	p := req.PerfilPaciente
 
 	key := fmt.Sprintf("pred:v%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%f:%f:%d:%d:%d:%d:%d",
 		atomic.LoadUint64(&modeloVersion),
@@ -381,11 +439,11 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[API-REST] ADVERTENCIA: Error en caché obteniendo clave %s: %v\n", key, err)
 	}
 
-	// Sincronización Singleflight artesanal
+	// Sincronización Singleflight
 	sfMutex.Lock()
 	if c, ok := sfGroup[key]; ok {
 		sfMutex.Unlock()
-		c.wg.Wait() // Esperar a la petición líder
+		c.wg.Wait()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"prediction":   c.val,
@@ -407,7 +465,7 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 	var clase uint8
 	if len(bosqueLocal) == 0 {
 		http.Error(w, "El modelo aún no ha sido entrenado", http.StatusServiceUnavailable)
-		// Liberar Singleflight en error
+
 		sfMutex.Lock()
 		delete(sfGroup, key)
 		sfMutex.Unlock()
@@ -417,20 +475,19 @@ func handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	clase = analisis.PredecirRandomForest(p, bosqueLocal)
 
-	// Compartir resultado Singleflight y liberar
 	c.val = clase
 	sfMutex.Lock()
 	delete(sfGroup, key)
 	sfMutex.Unlock()
 	c.wg.Done()
 
-	// Persistencia Asíncrona Combinada (Caché + MongoDB)
-	go func(llave string, valor uint8, perfil models.PerfilPaciente) {
+	// Persistencia Asíncrona Combinada
+	go func(llave string, valor uint8, perfil models.PerfilPaciente, email string) {
 		ctxRedisSet, cancelSet := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancelSet()
 		rdb.Set(ctxRedisSet, llave, valor, 12*time.Hour)
-		guardarHistorialEnMongo(perfil, valor)
-	}(key, clase, p)
+		guardarHistorialEnMongo(perfil, valor, email)
+	}(key, clase, p, req.Email)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -446,7 +503,7 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lectura de métricas con Bloqueo Compartido
+	// Lectura de métricas
 	rwMutex.RLock()
 	matriz := matrizGlobal
 	rwMutex.RUnlock()
@@ -469,7 +526,7 @@ func leerEnteroEnv(nombre string, valorDefault int) int {
 	return valor
 }
 
-func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
+func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8, email string) {
 	if historialCol == nil {
 		return
 	}
@@ -479,9 +536,40 @@ func guardarHistorialEnMongo(p models.PerfilPaciente, diagnosis uint8) {
 	doc := models.HistorialPredictivo{
 		Perfil:    p,
 		Diagnosis: diagnosis,
+		Email:     email,
 		CreatedAt: time.Now(),
 	}
 	_, _ = historialCol.InsertOne(ctx, doc)
+}
+
+func handleHistorial(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}})
+	findOptions.SetLimit(50)
+
+	cursor, err := historialCol.Find(ctx, bson.D{}, findOptions)
+	if err != nil {
+		http.Error(w, "Error al consultar historial", http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var resultados []models.HistorialPredictivo
+	if err = cursor.All(ctx, &resultados); err != nil {
+		http.Error(w, "Error al decodificar historial", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resultados)
 }
 
 func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
@@ -495,8 +583,10 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 
 	go func() {
+		atomic.AddUint64(&activeSockets, 1)
+		defer atomic.AddUint64(&activeSockets, ^uint64(0))
 		defer conn.Close()
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -504,12 +594,26 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 			matriz := matrizGlobal
 			rwMutex.RUnlock()
 
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
+			// Recolectar nodos
+			var nodosList []NodoMetrics
+			nodeTelemetry.Range(func(key, value interface{}) bool {
+				nodosList = append(nodosList, value.(NodoMetrics))
+				return true
+			})
+
 			payload, _ := json.Marshal(map[string]interface{}{
 				"cache_hits":     atomic.LoadUint64(&cacheHits),
 				"cache_misses":   atomic.LoadUint64(&cacheMisses),
 				"cache_errors":   atomic.LoadUint64(&cacheErrors),
 				"modelo_version": atomic.LoadUint64(&modeloVersion),
+				"nodos_activos":  atomic.LoadUint64(&activeSockets),
+				"cpu_goroutines": runtime.NumGoroutine(),
+				"ram_sys_mb":     m.Sys / 1024 / 1024,
 				"matriz":         matriz,
+				"cluster_nodes":  nodosList,
 			})
 
 			size := len(payload)
@@ -520,7 +624,7 @@ func handleWSMetrics(w http.ResponseWriter, r *http.Request) {
 				header = []byte{0x81, 126, byte(size >> 8), byte(size & 255)}
 			}
 
-			// Intercepción de error = Desconexión limpia del cliente
+			// Intercepción de error --> Desconexión limpia del cliente
 			if _, err := conn.Write(append(header, payload...)); err != nil {
 				return
 			}
