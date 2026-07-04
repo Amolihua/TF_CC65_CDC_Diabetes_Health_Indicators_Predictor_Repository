@@ -1,0 +1,238 @@
+<div class="max-w-6xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+  <div class="text-center max-w-2xl mx-auto mb-10">
+    <span class="text-teal-600 font-semibold tracking-wide text-xs uppercase bg-teal-50 px-3 py-1 rounded-full">Medicina Preventiva Inteligente</span>
+    <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight mt-3">Evaluación de Riesgo de Diabetes</h1>
+    <p class="text-slate-500 mt-2 text-sm">Completa el perfil clínico para procesar tus indicadores en tiempo real mediante el ecosistema GlycoThread.</p>
+    <div class="mt-4 bg-amber-50 border-l-4 border-amber-400 p-3 rounded-r-lg shadow-sm text-left">
+      <p class="text-xs text-amber-800 font-medium">
+        <span class="font-bold uppercase tracking-wider text-amber-900 mr-1">Aviso Legal:</span> 
+        Esta herramienta utiliza modelos predictivos de Machine Learning con fines estrictamente académicos e informativos. <strong>No somos médicos</strong>. Cualquier resultado obtenido aquí debe ser obligatoriamente verificado con un profesional de la salud.
+      </p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+      <form [formGroup]="form" (ngSubmit)="enviarEvaluacion()" class="space-y-6">
+
+        <div>
+          <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-2 mb-4 flex items-center text-teal-600">0. Datos de Contacto (Opcional)</h2>
+          <div class="grid grid-cols-1 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Correo Electrónico <span class="text-slate-400 font-normal normal-case">(Para recibir notificaciones si se detecta alto riesgo)</span></label>
+              <input type="email" formControlName="email" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500" placeholder="usuario@correo.com">
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-2 mb-4 flex items-center text-teal-600">1. Indicadores Métricos y Demográficos</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Índice de Masa Corporal (BMI)</label>
+              <input type="number" formControlName="bmi" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500" placeholder="Ej. 25">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Sexo Biológico</label>
+              <select formControlName="sex" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500">
+                <option [value]="0">Mujer</option>
+                <option [value]="1">Varón</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Rango de Edad</label>
+              <select formControlName="age" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500">
+                <option [value]="1">18 a 24 años</option>
+                <option [value]="5">40 a 44 años</option>
+                <option [value]="9">60 a 64 años</option>
+                <option [value]="13">80 a más años</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Nivel Socioeconómico (Ingresos)</label>
+              <select formControlName="income" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500">
+                <option [value]="1">Menor a $10,000 / año</option>
+                <option [value]="5">Hasta $35,000 / año</option>
+                <option [value]="8">$75,000 o más / año</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Nivel Educativo</label>
+              <select formControlName="education" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500">
+                <option [value]="1">Nunca asistió / Kinder</option>
+                <option [value]="2">Primaria</option>
+                <option [value]="3">Secundaria Incompleta</option>
+                <option [value]="4">Secundaria Completa</option>
+                <option [value]="5">Universidad Incompleta</option>
+                <option [value]="6">Universidad Completa</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-2 mb-4 flex items-center text-teal-600">2. Historial Clínico Diagnóstico</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Sufre de Presión Arterial Alta?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="high_bp" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="high_bp" class="mr-1"> No</label>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Revisó su colesterol en 5 años?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="chol_check" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="chol_check" class="mr-1"> No</label>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Registra Colesterol Alto?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="high_chol" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="high_chol" class="mr-1"> No</label>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Historial de Ataque Cerebrovascular?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="stroke" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="stroke" class="mr-1"> No</label>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Historial Coronario / Infarto?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="heart_disease_or_attack" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="heart_disease_or_attack" class="mr-1"> No</label>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <span class="text-xs font-medium text-slate-700">¿Dificultad grave al caminar o subir escaleras?</span>
+              <div class="flex space-x-2">
+                <label><input type="radio" [value]="1" formControlName="diff_walk" class="mr-1"> Sí</label>
+                <label><input type="radio" [value]="0" formControlName="diff_walk" class="mr-1"> No</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h2 class="text-base font-bold text-slate-900 border-b border-slate-100 pb-2 mb-4 flex items-center text-teal-600">3. Hábitos de Estilo de Vida y Bienestar</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Fumador habitual?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="smoker"> Sí</label><label><input type="radio" [value]="0" formControlName="smoker"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Actividad física (últimos 30 días)?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="phys_activity"> Sí</label><label><input type="radio" [value]="0" formControlName="phys_activity"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Consume fruta 1+ veces al día?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="fruits"> Sí</label><label><input type="radio" [value]="0" formControlName="fruits"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Consume vegetales 1+ veces al día?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="veggies"> Sí</label><label><input type="radio" [value]="0" formControlName="veggies"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Consumo excesivo de alcohol?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="hvy_alcohol_consump"> Sí</label><label><input type="radio" [value]="0" formControlName="hvy_alcohol_consump"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+              <span class="text-xs text-slate-700">¿Tiene seguro médico?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="any_healthcare"> Sí</label><label><input type="radio" [value]="0" formControlName="any_healthcare"> No</label></div>
+            </div>
+            <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg sm:col-span-2">
+              <span class="text-xs text-slate-700">¿No pudo ver al médico por el costo en los últimos 12 meses?</span>
+              <div class="flex space-x-2"><label><input type="radio" [value]="1" formControlName="no_doc_bc_cost"> Sí</label><label><input type="radio" [value]="0" formControlName="no_doc_bc_cost"> No</label></div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Días con Mala Salud Mental (Mes)</label>
+              <input type="number" formControlName="ment_hlth" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Días con Lesión Física (Mes)</label>
+              <input type="number" formControlName="phys_hlth" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Autoevaluación Estado de Salud General</label>
+              <select formControlName="gen_hlth" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                <option [value]="1">Excelente</option>
+                <option [value]="2">Muy Buena</option>
+                <option [value]="3">Bueno</option>
+                <option [value]="4">Regular</option>
+                <option [value]="5">Mala / Deteriorada</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex space-x-4 pt-4 border-t border-slate-100">
+          <button type="submit" [disabled]="form.invalid || isLoading" class="flex-1 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition-colors shadow-sm">
+            {{ isLoading ? 'Procesando en clúster distributed...' : 'Lanzar Diagnóstico Preventivo' }}
+          </button>
+          <button type="button" (click)="limpiarFormulario()" class="bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium py-2.5 px-4 rounded-xl text-sm transition-colors">
+            Limpiar
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="lg:col-span-1">
+      <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm sticky top-24">
+        <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 text-slate-400">Predicción del Sistema</h2>
+
+        <div *ngIf="predictionResult === null && !isLoading && !errorMessage" class="text-center py-12">
+          <div class="text-slate-300 font-medium text-4xl mb-3">📋</div>
+          <p class="text-sm text-slate-500 font-medium">Esperando perfil clínico</p>
+          <p class="text-xs text-slate-400 mt-1">Completa el formulario y presiona enviar para calcular el riesgo metabólico.</p>
+        </div>
+
+        <div *ngIf="isLoading" class="text-center py-12">
+          <div class="w-8 h-8 border-4 border-teal-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p class="text-sm text-slate-600 font-medium">Evaluando Bosques de Decisión</p>
+          <p class="text-xs text-slate-400 mt-1">Calculando en los nodos distribuidos del backend GlycoThread.</p>
+        </div>
+
+        <div *ngIf="errorMessage" class="bg-rose-50 border border-rose-200 rounded-xl p-4 text-center">
+          <p class="text-sm text-rose-700 font-semibold">Fallo Operativo</p>
+          <p class="text-xs text-rose-500 mt-1">{{ errorMessage }}</p>
+        </div>
+
+        <div *ngIf="predictionResult !== null && !isLoading">
+          <div *ngIf="predictionResult === 0" class="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center">
+            <span class="text-3xl">🎉</span>
+            <h3 class="text-lg font-bold text-emerald-800 mt-2">Estado: Saludable</h3>
+            <p class="text-xs text-emerald-600 mt-2 font-medium">Los indicadores analizados demuestran un perfil óptimo con bajo riesgo inminente.</p>
+          </div>
+
+          <div *ngIf="predictionResult === 1" class="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-center">
+            <span class="text-3xl">⚠️</span>
+            <h3 class="text-lg font-bold text-amber-800 mt-2">Estado: Prediabetes</h3>
+            <p class="text-xs text-amber-600 mt-2 font-medium">¡Alerta preventiva! Se detectaron indicadores al límite de riesgo crónico.</p>
+          </div>
+
+          <div *ngIf="predictionResult === 2" class="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-center">
+            <span class="text-3xl">🚨</span>
+            <h3 class="text-lg font-bold text-rose-800 mt-2">Estado: Alto Riesgo</h3>
+            <p class="text-xs text-rose-600 mt-2 font-medium">Se detectaron indicadores de una alta probabilidad compatible con diabetes activa.</p>
+          </div>
+        </div>
+
+        
+        <div class="mt-6 pt-5 border-t border-slate-100 text-center">
+          <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1 flex items-center justify-center gap-1">
+            <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            Responsabilidad Médica
+          </p>
+          <p class="text-[11px] text-slate-500 leading-relaxed">
+            Esta predicción es probabilística y no constituye un diagnóstico oficial. Por favor, <strong>verifica estos resultados con un profesional de la salud</strong> antes de tomar cualquier decisión médica o alterar tu estilo de vida.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

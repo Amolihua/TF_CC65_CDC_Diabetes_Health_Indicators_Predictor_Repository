@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"nodo-ml/internal/engine"
 	"nodo-ml/internal/models"
 	"os"
@@ -22,13 +23,45 @@ type MetadataEntrenamiento struct {
 	TotalRegistros int    `json:"total_registros,omitempty"`
 }
 
+type NodoMetrics struct {
+	Hostname   string `json:"hostname"`
+	Goroutines int    `json:"goroutines"`
+	RamSysMB   uint64 `json:"ram_sys_mb"`
+	RamAllocMB uint64 `json:"ram_alloc_mb"`
+}
+
 func main() {
+	go iniciarLoopTelemetria()
+
 	listener, _ := net.Listen("tcp", ":9000")
 	fmt.Println("Nodo ML TCP Server escuchando en puerto: |-| 9000 |-| ")
 
 	for {
 		conn, _ := listener.Accept()
 		go manejarConexion(conn)
+	}
+}
+
+func iniciarLoopTelemetria() {
+	hostname, _ := os.Hostname()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	client := &http.Client{Timeout: 40 * time.Millisecond}
+
+	for range ticker.C {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		metrics := NodoMetrics{
+			Hostname:   hostname,
+			Goroutines: runtime.NumGoroutine(),
+			RamSysMB:   m.Sys / 1024 / 1024,
+			RamAllocMB: m.Alloc / 1024 / 1024,
+		}
+
+		body, _ := json.Marshal(metrics)
+		_, _ = client.Post("http://api-coordinador:8080/api/internal/telemetry", "application/json", bytes.NewBuffer(body))
 	}
 }
 
@@ -39,7 +72,7 @@ func manejarConexion(conn net.Conn) {
 	meta, dataset := recibirDataset(conn)
 	numWorkers := resolverWorkers(meta.NumWorkers)
 
-	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d\n", meta.Algoritmo, len(dataset), numWorkers)
+	fmt.Printf("[TCP] Recibida solicitud para motor: %s con %d registros | workers=%d | arboles_esperados=%d\n", meta.Algoritmo, len(dataset), numWorkers, meta.NumTrees)
 
 	inicioEntrenamiento := time.Now()
 
@@ -61,10 +94,9 @@ func manejarConexion(conn net.Conn) {
 
 	tiempoEntrenamiento := time.Since(inicioEntrenamiento)
 
-	// Enviar respuesta binaria directa
 	_, _ = conn.Write(respuestaBinaria)
 
-	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Total: %s | Entrenamiento: %s\n", len(dataset), time.Since(inicio), tiempoEntrenamiento)
+	fmt.Printf("[TCP] Proceso finalizado. Registros: %d | Árboles generados: %d | Total: %s | Entrenamiento: %s\n", len(dataset), meta.NumTrees, time.Since(inicio), tiempoEntrenamiento)
 }
 
 func recibirDataset(conn net.Conn) (MetadataEntrenamiento, []models.PerfilPaciente) {
